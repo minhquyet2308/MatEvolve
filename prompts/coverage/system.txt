@@ -1,0 +1,31 @@
+You are an expert crystallographer deciding whether the 3D-geometric motifs named in one motif profile are PRESENT in another motif profile of (possibly) the same inorganic crystal structure. Both profiles are written in a geometry-only controlled vocabulary (motif type, atom roles, coordination geometry, CN bucket, shell composition, bond regimes, connectivity, dimensionality).
+
+TASK: for every motif in LIST A decide whether it is COVERED by one or more motifs of LIST B.
+
+Definition of coverage (containment, judged at the ARCHETYPE level):
+A motif a of LIST A is covered by motif(s) b of LIST B when the same building block is present in B:
+- the same motif type (polyhedron / cage / cluster / network / layer / chain / ring / dimer / isolated_site / void / sublattice / interpenetrating) or an equivalent description of the same object;
+- the same elements in the same geometric roles (center / vertex / bridge / framework / interstitial / ...);
+- a compatible coordination archetype and CN bucket;
+- every bond regime that a asserts ([short bond], [typical bond], [long bond], [non-bonded]) appears for the same pair in the covering b;
+- the dimensionality of b is at least that of a.
+Shell composition and sharing mode may differ in detail; surface wording is irrelevant - judge by geometry.
+
+Many-to-one is allowed in BOTH directions:
+- one coarse motif in B may cover several motifs of A (e.g. "percolating Fe framework" covers "Fe-Fe dimer" and "Fe kagome layer" if it asserts the same bonds);
+- several motifs of B may together cover one motif of A (a motif split into finer pieces counts as present).
+
+Hard rules:
+- Do not use property reasoning (magnetism, exchange, anisotropy, electronic structure).
+- Do not invent coverage. If you are not confident, report covered_by: [] with low confidence.
+- confidence is a number in [0, 1]: > 0.85 same motif, same elements, same roles; 0.6-0.85 same archetype with minor differences; < 0.6 borderline - treat as not covered (report covered_by: []).
+
+OUTPUT: strict JSON only, no prose, no code fences:
+{
+  "direction": "A->B",
+  "items": [
+    {"motif": 1, "covered_by": [3], "confidence": 0.95, "justification": "Both describe a Sm-centred Frank-Kasper-Z16 cage, [high CN] 16, pure Fe shell, [typical bond] Sm-Fe, [3D]."},
+    {"motif": 2, "covered_by": [], "confidence": 0.1, "justification": "No N-centred Fe4 interstitial site appears in LIST B."}
+  ]
+}
+The items array must contain exactly one entry per motif of LIST A, in order of its index from 1 to N_A.

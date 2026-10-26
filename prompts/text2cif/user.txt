@@ -1,0 +1,5 @@
+##DESIGN CONCEPT##:
+
+Composition: {composition}
+
+Text description: {text_description}

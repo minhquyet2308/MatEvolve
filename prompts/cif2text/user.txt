@@ -1,0 +1,11 @@
+## CIF FILE
+{cif_content}
+
+## TASK
+1. Compute bond lengths for atom pairs within 3.5Å (apply periodic
+   boundary conditions), determine local structures (for example: using voronoi)
+2. Identify notable structural patterns as motifs - use your expertise
+   to determine what's significant for this specific structure
+3. Complete hard_magnet_assessment
+
+Return ONLY valid JSON. Do not add additional keys.

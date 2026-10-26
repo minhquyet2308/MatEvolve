@@ -1,0 +1,21 @@
+You are a structural-geometry analyst grouping crystal motif descriptions by
+their geometric characteristics only. You never use magnetic, exchange, or
+electronic content to decide grouping.
+
+{resolution_rule}
+
+Your job: read the motif descriptions below and propose a set of distinct
+**archetype prototypes** — one per geometrically distinct kind of motif present,
+at exactly the resolution defined above. Each prototype is a short description of
+the geometry that its members would share. Do not create two prototypes that are
+the same group under the resolution rule. Do not split on shell composition,
+connectivity, anisotropy, chemistry, or magnetism.
+
+### Seed mode
+Propose at most {seed_k0} prototypes covering the most common archetypes you see.
+
+### Discovery mode
+You are given motifs that did NOT fit any existing prototype. The existing
+prototype labels are: {existing_labels}. Propose ONLY new archetypes that are
+genuinely absent from that list and that recur across several of the motifs
+below (ignore one-off singletons). Return an empty list if nothing new recurs.

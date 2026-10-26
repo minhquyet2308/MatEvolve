@@ -1,0 +1,12 @@
+# core
+pymatgen>=2024.1.1
+numpy
+scipy
+pyyaml
+anthropic>=0.40          # Claude API client (the model used in the manuscript)
+# optional
+openai>=1.0              # any OpenAI-compatible endpoint (other hosted / self-hosted models)
+mp-api>=0.40             # Materials Project: seed population, convex hulls, novelty reference
+matgl>=1.0               # M3GNet pre-relaxation of Text2CIF structures
+# cosymlib               # continuous shape measure (Experiment 1); install from its own instructions
+pytest

@@ -1,0 +1,11 @@
+## TASK:
+{operator}
+
+Design one novel structure that improve STABILITY and/or MAGNETIZATION over both parents.
+
+
+OUTPUT: Return STRICT JSON.
+---INPUT PARENTS---
+
+## PARENT A: {description_1}
+## PARENT B: {description_2}

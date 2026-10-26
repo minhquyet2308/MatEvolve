@@ -1,0 +1,55 @@
+# MatEvolve configuration of the permanent-magnet run reported in the manuscript.
+# Every number below is stated in the Methods / Supplementary Information; the
+# comments give the section.
+
+llm:                                   # Section 2.2: one frozen commercial model for every agent
+  provider: anthropic
+  model: claude-fable-5
+  temperature: 0.5
+  max_tokens: 16000
+  api_key_env: ANTHROPIC_API_KEY
+
+translate:                             # Methods 2-3, SI S1-S2
+  geometry_tool: true                  # CIF2Text aided by neighbour lists (3.5 A, PBC) + Voronoi CN
+  standardize: true                    # second pass into the controlled vocabulary
+  validity_budget: 5                   # Text2CIF inner validity loop
+  min_distance: 1.5                    # A, minimum interatomic distance
+  prerelax: true                       # M3GNet pre-relaxation of a valid CIF
+  prerelax_fmax: 1.0
+  prerelax_steps: 100
+  primitive: true                      # reduce to the primitive cell
+  translate_budget: 5                  # Algorithm 2 outer loop
+  realize_budget: 5                    # Algorithm 3 outer loop
+  precision_threshold: 0.7             # Coverage: recall = 1, precision >= 0.7
+  min_confidence: 0.6
+  matcher_tolerances: {ltol: 0.4, stol: 0.7, angle_tol: 15}
+
+loop:                                  # Methods 1
+  n_generations: 4
+  offspring_per_generation: 200
+  dft_budget_per_generation: 100
+  parent_pool_size: 200                # 200 lowest E_hull x 200 highest mu0Ms
+  operator: CROSSOVER                  # mutation operators available but not applied in this run
+  stability_epsilon: 0.1               # eV/atom, ERS target label and SUN
+  ers_alpha: 0.1                       # Methods 5 (grid search)
+  export_unselected: true              # also hand the ERS-unselected proposals to DFT (diagnostics, outside the loop)
+
+clustering:                            # Methods 4
+  R: 5
+  seed_k0: 12
+  batch_size: 100
+  outlier_floor: 15
+  max_rounds: 8
+  s_min: 0.8
+  ari_min: 0.95
+  stable_rounds: 2
+  clusters_json: data/motif_groups/clusters.json   # frozen 17-group vocabulary used by the ERS
+
+dft:                                   # Methods 6: relaxations run by the separate DFT tool (SI S8 parameters);
+  mp_api_key_env: MP_API_KEY           # here only the post-processing of its results (hull, magnetization)
+  hull_cache: data/mp_hull_cache
+
+evaluation:                            # SI S4.1
+  stability_epsilon: 0.1
+  magnetization_tau: 1.0               # tesla
+  reference_db: data/reference/dref.sqlite   # Materials Project + Alexandria, indexed by formula

@@ -1,0 +1,10 @@
+## TASK
+For each motif in LIST A, decide whether it is covered by one or more motifs of LIST B. Follow the rules in the system prompt exactly.
+
+## LIST A
+{list_a}
+
+## LIST B
+{list_b}
+
+Return JSON only.

@@ -1,0 +1,11 @@
+## TASK
+Standardize each motif below using the controlled vocabulary from motif_vocabulary.md.
+Return one paragraph per motif in the format:
+
+Motif #<id>: <standardized paragraph>
+
+## MOTIFS
+
+Motif #1: <raw description>
+Motif #2: <raw description>
+...

@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "matevolve"
+version = "1.0.0"
+description = "Agent-based evolutionary design of crystal structures over motif profiles (MatEvolve)"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+  {name = "Dinh-Khiet Le"}, {name = "Minh-Quyet Ha"}, {name = "Hong-Phuc Vu-Dinh"}, {name = "Viet-Cuong Nguyen"},
+  {name = "Huan Tran"}, {name = "Truyen Tran"}, {name = "Takashi Miyake"}, {name = "Hiori Kino"}, {name = "Hieu-Chi Dam"},
+]
+dependencies = [
+  "pymatgen>=2024.1.1",
+  "numpy",
+  "scipy",
+  "pyyaml",
+  "anthropic>=0.40",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0"]
+mp = ["mp-api>=0.40"]
+relax = ["matgl>=1.0"]
+cshm = ["cosymlib"]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["matevolve*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
