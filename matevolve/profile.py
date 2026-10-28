@@ -3,16 +3,17 @@
 A :class:`MotifProfile` is the set of distinct structural motifs a crystal
 is built from, together with its composition.  It deliberately carries no
 atomic coordinates, lattice parameters, space-group symbol or structure-type
-label (main text, Section 2.1).  Each motif has a raw expert description
+label.  Each motif has a raw expert description
 (from CIF2Text's first pass) and a geometry-only *standardized* paragraph
 written in the controlled vocabulary of ``prompts/standardizer/motif_vocabulary.md``
-(SI S1).  Only the composition and the standardized motif descriptions are
+.  Only the composition and the standardized motif descriptions are
 passed to the other agents.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -97,7 +98,7 @@ class MotifProfile:
 
 @dataclass
 class DesignConcept:
-    """An offspring design emitted by the evolutionary operator (SI S3).
+    """An offspring design emitted by the evolutionary operator.
 
     ``motifs`` is the designed motif set (self-contained, no parent indices),
     ``composition`` an integral formula and ``text_description`` the
@@ -139,7 +140,7 @@ def parse_design_json(obj: Dict[str, Any], operator: str, parents: Iterable[str]
     """Convert the design agent's strict-JSON reply into :class:`DesignConcept`s.
 
     The reply has the form ``{"designs": [{"motifs": [{"motif #1": "..."}, ...],
-    "composition": "...", "text_description": "..."}]}`` (SI S3).  Motif
+    "composition": "...", "text_description": "..."}]}``.  Motif
     entries may be ``{"motif #k": text}`` dicts or plain strings.
     """
     out: List[DesignConcept] = []
@@ -161,3 +162,49 @@ def parse_design_json(obj: Dict[str, Any], operator: str, parents: Iterable[str]
             parents=list(parents),
         ))
     return out
+
+
+# ----------------------------------------------------------------------
+# human-readable profile files (<id>.txt)
+# ----------------------------------------------------------------------
+_MOTIF_LINE = re.compile(r"^\s*(?:Gene|Motif)\s*#(\d+)\s*(?:\((.*)\))?\s*[:\-–—]\s*(.+)$", re.I)
+
+
+def profile_to_txt(profile: MotifProfile) -> str:
+    """Render a profile as the ``.txt`` kept next to each CIF in the database."""
+    lines = [f"Composition: {profile.composition}", "", "### MOTIFS"]
+    for m in profile.motifs:
+        name = f" ({m.name})" if m.name else ""
+        lines.append(f"Motif #{m.motif_id}{name}: {m.text}")
+    if profile.hard_magnet_assessment:
+        lines += ["", "### HARD MAGNET ASSESSMENT"]
+        lines += [f"{k.title()}: {v}" for k, v in profile.hard_magnet_assessment.items()]
+    return "\n".join(lines) + "\n"
+
+
+def parse_profile_txt(text: str, composition: str = "", source: Optional[str] = None) -> MotifProfile:
+    """Read a profile ``.txt`` written by :func:`profile_to_txt` *or* by the earlier pipeline.
+
+    Accepts both legacy layouts (``### 2) MATERIAL GENES`` with ``Gene #k (name): ...``
+    and ``==== MATERIAL GENES ====`` with ``Gene #k: ...``).  Only the motif
+    lines are kept; overview and assessment sections are ignored, so the
+    returned profile carries no lattice, space-group or structure-type
+    information whatever the file contained.
+    """
+    motifs: List[Motif] = []
+    comp = composition
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.lower().startswith("composition:") and not comp and ":" in line:
+            cand = line.split(":", 1)[1].strip()
+            if cand and " " not in cand:
+                comp = cand
+        if line.lower().startswith("formula:") and not comp:
+            comp = line.split(":", 1)[1].strip()
+        m = _MOTIF_LINE.match(line)
+        if m:
+            motifs.append(Motif(motif_id=int(m.group(1)), name=(m.group(2) or "").strip(),
+                                description_raw=m.group(3).strip(), description_standardized=m.group(3).strip()))
+    return MotifProfile(composition=comp, motifs=motifs, source=source)

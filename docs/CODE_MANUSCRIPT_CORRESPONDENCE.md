@@ -6,28 +6,30 @@ mapping was verified. Section numbers refer to `main.tex` / `supplementary.tex` 
 v20 submission.
 
 Verification methods: **T** = covered by an offline unit test in `tests/`;
-**D** = byte-level diff against the SI (`scripts/check_prompts_against_si.py`);
+**D** = byte-level diff of `prompts/` against the SI listings (done during preparation; the SI prompts are reproduced verbatim);
 **R** = verified by reading the code (constant or control flow).
 
 ## 1. Framework overview (Sec. 2.1) and generation loop (Methods 1, Algorithm 1)
 
 | Manuscript | Code | Check |
 |---|---|---|
-| Pipeline per generation: Structure Translate → Motif editing → Motif Translate → ERS ranking → DFT validation → pool update | `matevolve/loop.py::MatEvolve.init / propose / rank / export / postprocess / update / metrics / next_generation` (steps 0–6); the DFT relaxation itself is performed by the authors' separate tool between `export` and `postprocess` | T (`test_loop.py`) |
+| Pipeline per generation: Structure Translate → Motif editing → Motif Translate → ERS ranking → DFT validation → pool update | `matevolve/loop.py::MatEvolve.init / propose / rank / export / translate_generation / next_generation` (steps 0–4; `score` is an optional report outside the loop) over `database.py::Database` (the authors' `data.csv` + CIF + profile per structure); DFT relaxation and property calculation are performed by the authors' separate tool between `export` and `translate` | T (`test_loop.py`) |
 | Four generations | `LoopConfig.n_generations = 4` | R |
 | 200 offspring per generation; ERS selects 100 for DFT | `LoopConfig.offspring_per_generation = 200`, `dft_budget_per_generation = 100` | R |
-| Parents: one from the 200 lowest *E*<sub>hull</sub>, one from the 200 highest μ<sub>0</sub>*M*<sub>s</sub>; crossover into one offspring | `Pool.stability_pool(200)`, `Pool.magnetization_pool(200)`, `MatEvolve.propose` (one `EvoOperator.propose(..., max_designs=1)` per design step) | R |
+| Parents: one from the 200 lowest *E*<sub>hull</sub>, one from the 200 highest μ<sub>0</sub>*M*<sub>s</sub>; crossover into one offspring | `Database.stability_pool(200)`, `Database.magnetization_pool(200)`, `MatEvolve.propose` (one `EvoOperator.propose(..., max_designs=1)` per design step) | R |
 | Mutation operators available but not applied | `LoopConfig.operator = "CROSSOVER"`; `EvoOperator` supports ELEMENT/GEOMETRY MUTATION | R, T |
-| Every validated candidate (stable or not) joins the pool and the ERS evidence set; Π<sub>g</sub> = Π<sub>g−1</sub> ∪ V | `postprocess` computes the quantities and the post-relaxation motif profile/groups; `update` adds every selected structure to `Pool`; `metrics` refits the ERS on `Pool.observations()` (label *E*<sub>hull</sub> ≤ 0.1), which the next `rank` uses | T |
-| The 400 unselected proposals are relaxed as diagnostics, outside the search loop | `LoopConfig.export_unselected`; their results are recorded in `validated.json` but **not** added to the pool | T |
+| Every validated candidate (stable or not) joins the pool and the ERS evidence set; Π<sub>g</sub> = Π<sub>g−1</sub> ∪ V | the authors add every relaxed structure with its properties to `data.csv`; `translate` writes its post-relaxation motif profile and groups; `Database.observations()` (label *E*<sub>hull</sub> ≤ 0.1) feeds `rank` and `score` | T |
+| The 400 unselected proposals are relaxed as diagnostics, outside the search loop | `LoopConfig.export_unselected`; their rows carry `selected = 0` in `data.csv` and `Database.in_pool()` keeps them out of the parent pools and the ERS evidence | T |
 | All agents on one frozen model, Claude Fable 5 (`claude-fable-5`), temperature 0.5 | `matevolve/llm.py::DEFAULT_MODEL, DEFAULT_TEMPERATURE`, `configs/magnet_run.yaml::llm` | R |
-| Seed set: RE ∈ {Ce, Pr, Nd, Sm, Gd, Tb, Dy, Ho, Er, Y} × TM ∈ {Fe, Co, Mn, Ni}, *M* > 10 μ<sub>B</sub>/f.u., *E*<sub>hull</sub> ≤ 0.2 eV/atom, ≤ 100 atoms; population initialized from D<sub>seed</sub> | `scripts/prepare_seed_population.py` (`RE`, `TM`, `--min-mag-per-fu 10`, `--max-ehull 0.2`, `--max-sites 100`); `loop.py::init` translates every seed and assigns its motif groups (step 0) | R, T |
+| *(note)* the `anthropic` SDK ≥ 1.0 no longer exposes `temperature` on `Messages.create`; the client passes it through `extra_body` and, if the model's API rejects it, runs at the model default with a warning | `AnthropicClient.complete` | R |
+| Seed set: RE ∈ {Ce, Pr, Nd, Sm, Gd, Tb, Dy, Ho, Er, Y} × TM ∈ {Fe, Co, Mn, Ni}, *M* > 10 μ<sub>B</sub>/f.u., *E*<sub>hull</sub> ≤ 0.2 eV/atom, ≤ 100 atoms; population initialized from D<sub>seed</sub> | `scripts/fetch_database.py --variant seeds` downloads D<sub>seed</sub> (948 structures with CIF, motif profile and properties) from the Zenodo record; `loop.py::init` marks them generation 0 and translates / groups any structure still lacking a profile (step 0) | R, T |
 
 ## 2. Motif profile and CIF2Text (Sec. 2.1, SI S1)
 
 | Manuscript | Code | Check |
 |---|---|---|
 | Profile = set of motifs + composition; no coordinates, lattice parameters, space-group symbol or structure-type label | `profile.py::MotifProfile` has only `composition`, `motifs`, assessment; `text_description()` emits one line per standardized motif | T (`test_structure_translate_accepts_round_trip`) |
+| *(observation, demo run 2026-10-28)* the code guarantees that no lattice parameter, coordinate or space-group symbol is *emitted by the pipeline*; the standardized paragraphs written by the model may still mention structure-type or site labels ("ThMn12-type", "8i-type position", "Frank-Kasper-like") when the raw description used them. The SI prompt is applied verbatim; accepted as model behaviour (no deterministic filter) — the manuscript wording "no structure-type label" should be read as "not supplied by the representation" | `agents/cif2text.py::Standardizer` (standardization is mandatory: a profile is rejected if any motif lacks its controlled-vocabulary paragraph) | R |
 | CIF2Text system/user prompts (SI S1 listings 1–2) | `prompts/cif2text/system.txt`, `user.txt` | D (identical) |
 | CIF2Text aided by a deterministic geometry tool: neighbour lists ≤ 3.5 Å under PBC, Voronoi coordination | `geometry.py::geometry_report` (cutoff 3.5 Å, `VoronoiNN` CN, bond regimes); appended to `{cif_content}` by `CIF2Text._cif_block` | T |
 | Returns JSON motifs (count set by the model, typically 5–10) + hard-magnet assessment | `CIF2Text.translate` / `_parse` | T |
@@ -55,7 +57,8 @@ Verification methods: **T** = covered by an offline unit test in `tests/`;
 | Design-agent system prompt and crossover/mutation templates (SI S3) | `prompts/evo_operator/{system,crossover,mutation}.txt` | D |
 | Text2CIF prompts (SI S2); `{composition}` and `{text_description}` filled at run time | `prompts/text2cif/{system,user}.txt`; `Text2CIFSession.__init__` | D, T |
 | Validity checks: parseable, full occupancy 1.0, integral counts, min. interatomic distance > 1.5 Å; `##ISSUE##` feedback; ≤ 5 attempts (inner loop) | `geometry.py::validate_cif` (`MIN_INTERATOMIC_DISTANCE = 1.5`), `agents/text2cif.py::Text2CIFSession.generate` (`VALIDITY_BUDGET = 5`) | T |
-| Valid CIF pre-relaxed with M3GNet, reduced to primitive cell, then re-translated | `Text2CIF.postprocess` → `geometry.py::M3GNetRelaxer` (`M3GNet-MP-2021.2.8-PES`), `to_primitive` | R |
+| Valid CIF pre-relaxed with M3GNet, reduced to primitive cell, then re-translated | `Text2CIF.postprocess` → `geometry.py::M3GNetRelaxer` (`translate.prerelax_model`), `to_primitive` | R |
+| *(note)* `M3GNet-MP-2021.2.8-PES` (used for the reported runs) is no longer distributed by matgl ≥ 4; the release defaults to `M3GNet-PES-MatPES-PBE-2025.2`, the same architecture retrained on MatPES-PBE, for the same loose pre-relaxation (fmax 1.0 eV/Å, ≤ 100 steps) | `geometry.py::DEFAULT_M3GNET`, `configs/magnet_run.yaml::translate.prerelax_model` | R |
 | Outer loop: S<sub>off</sub> ← Text2CIF(T<sub>off</sub>, feedback); T′<sub>off</sub> ← CIF2Text(S<sub>off</sub>); accept iff Coverage; ≤ 5 attempts; feedback = uncovered/spurious motifs | `Translator.motif_translate` (`REALIZE_BUDGET = 5`) | T |
 | Element lists in the Text2CIF prompt (RE incl. Gd, Tb, Dy, Ho, Er, Y) | `prompts/text2cif/system.txt` | D |
 
@@ -85,79 +88,32 @@ Verification methods: **T** = covered by an offline unit test in `tests/`;
 | Target belief: each host with a single substitution C<sub>t</sub> ← C<sub>v</sub> yielding S<sub>new</sub> transfers its label with strength M (Shafer discount, residual 1−M on Ω) | `ERS.target_mass` (hosts must share ≥ 1 group with the candidate, as the evidence pairs of stage 1 do) | T |
 | Dempster's rule, commutative/associative; rank by m({⊤}) | `ers/mass_function.py::MassFunction.combine`, `ERS.rank` | T |
 | α fixed by cross-validated grid search (α = 0.1) | `ERS.grid_search_alpha` (k-fold accuracy of label reproduction); `LoopConfig.ers_alpha = 0.1` | T |
-| Evidence set = seed structures + DFT-validated candidates of previous generations | `Pool.observations()` used in `MatEvolve.rank` | R |
+| Evidence set = seed structures + DFT-validated candidates of previous generations | `Database.observations()` used in `MatEvolve.rank` and `score` | R |
 
 ## 7. Property evaluation and first-principles validation (Methods 6, SI S8)
 
-The DFT relaxations are carried out by the authors' separate first-principles tool with the
-parameter set of SI S8 (VASP 5.4.4, PREC Accurate, ENCUT 520, EDIFF 1e-4, ALGO Fast, NELM 100,
-ISPIN 2, IBRION 2, ISIF 3, NSW 50, ISMEAR −5, KSPACING 0.25, KGAMMA, LASPH, LMAXMIX 6, LREAL Auto,
-LORBIT 11; POTCAR and *m*<sub>0</sub> of SI Table S8). That tool is **not part of this repository**.
-This repository exports the candidates to it and post-processes its output:
-
-| Manuscript | Code | Check |
-|---|---|---|
-| Hand-off of the ERS-selected candidates (and the unselected diagnostics) | `validation/dft_io.py::write_dft_subfolders` (`gen_XX/dft/<oid>/structure.cif` + `candidate.json`), `read_dft_subfolders` (`relaxed.cif` + `properties.json`; precomputed *E*<sub>hull</sub>/μ<sub>0</sub>M<sub>s</sub> accepted) | T |
-| Formation energy Δ*H*<sub>f</sub> = (E − Σ n<sub>i</sub>μ<sub>i</sub>)/N | `validation/hull.py::formation_energy_per_atom`, `MPHull.elemental_references` | R |
-| *E*<sub>hull</sub> against a hull of Materials Project entries spanning the elements; same MP version as the novelty reference; candidate on the same energy scale (MP2020 compatibility) | `MPHull.energy_above_hull` (`PhaseDiagram`, `MaterialsProject2020Compatibility`) | R |
-| μ[x] = M[x] + Σ σ<sub>k</sub> g<sub>J</sub>J: +0.714 μ<sub>B</sub> per Sm (also Pr, Nd), −(9–10) per Tb, Dy, Ho, Er; Ce/Eu/Gd already in M[x]; Yb none; μ<sub>0</sub>M<sub>s</sub> = μ<sub>0</sub>\|μ\|/V | `validation/magnetization.py::LANTHANIDE_4F`, `corrected_total_moment`, `saturation_magnetization_T` | T |
-| Validated quantities recorded and the structure returned to the database; relaxed structure re-translated into its motif profile | `loop.py::postprocess` (E_hull, μ<sub>0</sub>M<sub>s</sub>, `structure_translate`, motif groups) → `update` (→ `Pool`) | T |
+DFT relaxation, energy above the convex hull, formation energy and the 4f-corrected saturation
+magnetization are computed by the authors' separate first-principles tool with the settings of SI S8
+(VASP 5.4.4, PREC Accurate, ENCUT 520, EDIFF 1e-4, ALGO Fast, NELM 100, ISPIN 2, IBRION 2, ISIF 3, NSW 50,
+ISMEAR −5, KSPACING 0.25, KGAMMA, LASPH, LMAXMIX 6, LREAL Auto, LORBIT 11; POTCAR and *m*<sub>0</sub> of
+Table S8; μ[x] = M[x] + Σ σ<sub>k</sub> g<sub>J</sub>J). **None of this is in the repository.** The repository
+only exports the candidates (`dft_io.py::write_dft_subfolders`, one subfolder per structure) and reads
+the resulting `energy_above_hull` and `mu0M_T_corrected` columns of `data.csv` back (`database.py`).
 
 ## 8. Evaluation metrics (Sec. 2.2, SI S4)
 
+The novelty and new-prototype verdicts against D<sub>ref</sub> = Materials Project ∪ Alexandria (StructureMatcher
+match; AFLOW-style prototype label Λ) and the Experiment 1 fidelity measures (CShM, OFM distance and recall) are
+computed by the authors' external evaluation tool; this repository consumes the verdicts as columns of `data.csv`.
+
 | Manuscript | Code | Check |
 |---|---|---|
-| stable: *E*<sub>hull</sub> ≤ 0.1; unique: one representative per StructureMatcher duplicate class; novel: no match in MP ∪ Alexandria | `evaluation/rates.py` (`STABILITY_EPSILON`, `unique_representatives`, `novel_candidates`) | T |
-| magnetic: SUN ∧ μ<sub>0</sub>M<sub>s</sub> > 1 T; new prototype: SUN ∧ newproto; joint: SUN ∧ newproto ∧ magnetic; all as fractions of *N* | `RateReport.magnetic / new_prototype / joint / rates()` | T |
-| Prototype label Λ: symmetrize (symprec 0.1 Å), anonymized composition + Pearson symbol + SG number + per-species Wyckoff, species lettered by stoichiometry (ties by Wyckoff signature) | `evaluation/prototype.py::prototype_label` (`SYMPREC = 0.1`) | T (SmFe12 ≡ DyFe12) |
-| D<sub>ref</sub> = Materials Project ∪ Alexandria (per-formula) | `evaluation/reference.py::ReferenceDB` (`load_alexandria`, `fetch_mp`), `scripts/build_reference_db.py` | R |
-| Fisher's exact test between methods | `rates.py::fisher_exact`, `scripts/compute_rates.py --compare` | R |
-| Experiment 1 match rate at ltol 0.3, stol 0.5, angle_tol 10° | `geometry.py::REPORT_TOLERANCES`, `evaluation/fidelity.py::pair_fidelity` | T |
-| RMSD after optimal superposition, computed for all pairs; CShM (SHAPE / cosymlib) | `geometry.py::rmsd` (atom correspondence found at loose tolerances `RMSD_TOLERANCES`, no primitive reduction, so the displacement is reported also for pairs that fail the match test), `fidelity.py::continuous_shape_measure` (cosymlib, optional) | R |
-| OFM descriptor, L<sub>1</sub> distance, 100 nearest other originals, recall@k among all other structures | `evaluation/ofm.py`, `fidelity.py::ofm_neighbour_recall` | R |
-| Reconstructions compared as emitted, without DFT relaxation | `scripts/run_translation_fidelity.py` uses `TranslateResult.rebuilt` | R |
+| stable: *E*<sub>hull</sub> ≤ 0.1 eV/atom; μ<sub>0</sub>M<sub>s</sub> > 1 T | `loop.py::MatEvolve.score` (`LoopConfig.stability_epsilon`; 1 T) | T |
+| unique: one representative per duplicate class (as computed for the table: same reduced formula and space-group number); novel / new prototype: verdicts of the external evaluation | `score`: `_duplicate_key` (`formula`, `spacegroup_number` columns, else `SpacegroupAnalyzer` at symprec 0.1), `unseen` / `new_prototype` columns (`Columns.novel`, `Columns.new_prototype`) | T |
+| SUN = stable ∧ unique ∧ novel; magnetic = SUN ∧ P; new prototype = SUN ∧ newproto; joint = all three; rates over *N* | `score` → `metrics.json` per generation (selected / unselected) and for all candidates; reproduces the table of the paper on the released database (115/104/89/80; 97/80/53/48) | R |
+| Experiment 1 match rate at ltol 0.3, stol 0.5, angle_tol 10°; RMSD after optimal superposition | `geometry.py::REPORT_TOLERANCES`, `structures_match`, `rmsd` (printed by `run_matevolve.py structure-translate`) | T |
 
-## 9. Items for the authors to confirm
+**Wording to align:** SI S4.1 defines unique(c) via StructureMatcher; the reported counts use the (reduced
+formula, space-group number) class. With StructureMatcher at the stated tolerances the selected set gives
+117/106/88/79 instead of 115/104/89/80.
 
-The clean code implements the manuscript as written. Where the historical development code
-(the Ollama/OpenAI-era repository and the Cowork skills that produced the reported runs)
-differs from the manuscript, the difference is listed here so the authors can confirm that the
-manuscript describes what was actually run, or adjust the text. None of these items affect the
-clean code, which follows the manuscript in every case.
-
-| # | Topic | Manuscript | Historical code / skill | Clean code |
-|---|---|---|---|---|
-| 1 | Acceptance test of Motif Translate — **confirmed by the authors (2026-10-27): manuscript rule stands** | Coverage, *r* = 1 ∧ *p* ≥ 0.7 (Methods 2–3) | Python `StructureGeneratorAgent`: LLM yes/no evaluator; Cowork `matevolve-generate`: 1-to-1 Jaccard ≥ 0.7; coverage only in the later `matevolve-genematcher` skill, whose `coverage_matcher_prompt.md` and `gene_coverage.py` are not on disk | Coverage as in the manuscript; the judge prompt was re-written from the genematcher specification (`prompts/coverage/`) |
-| 2 | StructureMatcher tolerances (Alg. 2) — **confirmed by the authors (2026-10-27): manuscript tolerances stand** | ltol 0.4, stol 0.7, 15° | `matevolve-translate` skill: 0.2 / 0.3 / 5° + RMSD < 0.1 Å gate; `evolve_from_description.py` overlap check: 0.4 / 0.7 / 15° | 0.4 / 0.7 / 15°. Note: at these tolerances with `scale=True`, 1–2-atom elemental cells (bcc/fcc/hcp Fe) match each other; coverage and the 5–100-atom cells of the study make this moot, but a reviewer may ask |
-| 3 | Retry budgets — **confirmed by the authors (2026-10-27)** | 5 (Structure Translate), 5 (Motif Translate), 5 (validity loop) | translate skill 3; generator 10 × 4 | 5 / 5 / 5 |
-| 4 | Minimum interatomic distance in Text2CIF validity | 1.5 Å (SI S2) | `validate_structure`: 1.0 Å, then overlapping atoms pushed apart to 1.5 Å (`push_overlapping_atoms`, not described) | 1.5 Å, no push step |
-| 5 | Geometry tool for CIF2Text — **confirmed by the authors (2026-10-27): bond lengths are computed by Python, not by the model** | "aided by a deterministic geometry tool (neighbour lists ≤ 3.5 Å, Voronoi)" | Python agent: the user prompt asks the model itself to compute bond lengths; in Cowork the agent could call pymatgen | Tool output appended after the CIF (`CIF2Text(use_geometry_tool=True)`); switch off to reproduce the prompt-only variant |
-| 6 | Profile content — **confirmed by the authors (2026-10-27): the characterization used for the run kept no space group / structure type / lattice** | No space group / structure type / lattice (Sec. 2.1, SI S1) | `matevolve-characterize` schema keeps `space_group`, `structure_type`, `lattice_note`, Å values; design skill passed space group to the LLM | Not stored, not passed |
-| 7 | Prompt wording — **confirmed by the authors (2026-10-27): "motif"** | SI listings use "motif", no "PART 1 – GLOBAL INFORMATION", RE list incl. Gd…Y | Repository v0 prompts say "gene", have the Part-1 block and RE = Sm, Nd, Ce, Pr | SI wording shipped verbatim (9/9 identical) |
-| 8 | Clustering split rule — **confirmed by the authors (2026-10-27): code as written** | ρ<sub>g</sub> > 0.3 | `cluster_tools.py`: splits at ρ ≥ 0.3 and additionally requires \|g\| ≥ 4 and a co-association cut with ≥ 2 components | ρ > 0.3 (and \|g\| ≥ 4 as a sanity floor); partition proposed by the split prompt |
-| 9 | Clustering convergence — **confirmed by the authors (2026-10-27): code as written** | s̄ ≥ 0.8 ∧ ARI ≥ 0.95, two rounds, or 8 rounds | ARI > 0.95 (strict), plus "no merge/split" and an LLM prototype-stability verdict; pilot (25 %) + frozen-dictionary stage, cross-fold replication and canary motifs not described | Exactly the stated rule |
-| 10 | Archetype definition — **confirmed by the authors (2026-10-27): code as written (4-axis prompt kept)** | unit class, coordination geometry, CN band (3 axes) | `resolution_rule.md`: 4 axes (adds dimensionality) | Prompt kept as run (4 axes) — **manuscript may want to add dimensionality** |
-| 11 | Rival-concentration threshold — **confirmed by the authors (2026-10-27): 0.6 as in the code** | "concentrated on one rival group" (no number) | 0.6 | 0.6 (`LEAK_CONCENTRATION`); consider stating it |
-| 12 | Birth of new groups | ≥ 15 none-motifs → model summarizes new groups | orchestration step in the skill, not in `cluster_tools.py` | deterministic trigger + seed prompt in discovery mode |
-| 13 | ERS target mass | strength M(C<sub>t</sub>,C<sub>v</sub>) | `ers/v7`: M × α (second α; v6 has the manuscript form); prediction by pignistic probability; set-size-difference ≤ 2 and n-gram ≤ 2 filters; α grid search absent | M, rank by m({⊤}), no size filters (`max_combination_size=None`), grid search implemented |
-| 14 | INCAR — **out of scope: the relaxation is performed by the separate DFT tool; SI S8 must describe that tool's settings** | single set (SI S8) | `config_vasp_gpt.yaml`: 4 stages (ENCUT 520→700, KSPACING 0.30/0.50, ISIF 4/4/3/2, NSW 60/80/100, NELM 120, ISMEAR 1, ALGO Normal, EDIFF 1e-3…1e-6) | not in this repository |
-| 15 | MAGMOM — **out of scope: separate DFT tool; SI Table S8 must describe its settings** | MPRelaxSet defaults (Fe 5.0 …) | Fe 2.2, Mn 3.0, Ni 0.6, Cr 2.0, V 1.0, Mo 0, W 0, Ce 1.0, Eu 7.0, Sm 5.0 | not in this repository |
-| 16 | Stability objective / references | *E*<sub>hull</sub> vs MP hull; elemental references with the same settings | `vasp_slurm_backend`: −Δ*H*<sub>f</sub> from OQMD elemental energies; *E*<sub>hull</sub> branch commented out | *E*<sub>hull</sub> vs MP (MP2020-corrected) in `postprocess`; the elemental references the DFT tool uses for Δ*H*<sub>f</sub> are its own |
-| 17 | 4f correction | Pr, Nd, Sm add; Tb, Dy, Ho, Er subtract; \|μ\| | Sm only (+0.714), signed moment | full rule |
-| 18 | Parent pools / offspring per step | 200 / 200, one offspring per design step, crossover only | `evolve_from_description.py`: 300 / 300 default, up to 10 ideas per pair, falls back to ELEMENT MUTATION when parents overlap; `ea_main.py`: NSGA-II | as manuscript |
-| 19 | Benchmark rates | SUN + magnetic + new-prototype + joint over N = 400; novelty vs MP ∪ Alexandria; one representative per duplicate class | `compute_generation_metrics.py`: SUN per generation, both duplicates discarded, MP only (no Alexandria), no magnetic/prototype/joint rates | all four rates, MP ∪ Alexandria store, representative counting |
-| 20 | SI S3 design template | the JSON example ends with `],\n}` (a trailing comma, invalid JSON) | same in the v0 prompt | prompt kept verbatim; `extract_json` strips trailing commas when a model copies the example. Consider fixing the comma in SI S3 and in `prompts/evo_operator/system.txt` together |
-| 21 | Experiment 1 wording | main text Sec. 2.2: "Motif Translate rebuilt a structure from that profile" | — | Algorithm 2 (and the code) rebuild with a single Text2CIF call per revision of the profile, the coverage-driven retries being on the CIF2Text side; the wording could say "Text2CIF rebuilt" |
-| 22 | Secrets | — | `config_vasp_gpt.yaml` contains an OpenAI key (commented) and a Materials Project key in plain text | not included; **rotate both keys before the old repository is made public** |
-
-## 10. Legacy material not carried into the release
-
-`ea_main.py`, `materials_ea/` (NSGA-II engine, selection, seeding, operators v2), `agents/*_v2.py`,
-`agents/*_bk.py`, `agents/dummy_agents.py`, `ers/v1`–`v6`, `scripts/*ollama*`, `scripts/cif2text.py`,
-`scripts/evolve_from_description.py`, `scripts/run_operators_v2.py`, `scripts/test_*`,
-`scripts/substitute_baseline.py` (depends on the missing `materials_baseline`),
-`scripts/classification_models.py`, `hull_and_magnetization.py`, `materials_design.py`,
-`materials_tool.py`, `materials_ea/fitness/vasp_slurm_backend.py` and the other fitness backends (the DFT
-relaxation is a separate tool), the notebooks, logs, run outputs, data files, the Cowork plugin with bundled
-ML checkpoints, and all `*.md` design notes. The three Cowork skills' logic (characterize /
-generate / translate / design / cluster) is re-implemented as Python agents in `matevolve/`.

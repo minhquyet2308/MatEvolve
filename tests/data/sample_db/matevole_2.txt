@@ -1,0 +1,24 @@
+### 1) STRUCTURE OVERVIEW
+Formula: PrFe10B
+Structure Type: Vacancy-ordered Nd2Fe14B-derivative
+Space Group: P4_2/mnm
+Composition: 4 Pr, 40 Fe, and 4 B atoms per unit cell (Z=4), maintaining a 1:10:1 atomic ratio.
+Lattice Note: Tetragonal lattice (a=b=8.754 Å, c=11.862 Å) with an elongated c-axis (c/a ≈ 1.35), characteristic of RE-TM-B hard magnets.
+Effective Symmetry: Physically tetragonal (likely P42/mnm or I4/mcm) despite the P1 representation, with atoms organized in layers along the [001] direction.
+
+### 2) MATERIAL GENES
+Gene #1 (Pr-Fe16 Coordination Cage): A [RE cage] of [light RE weak 4f] Pr and [magnetic TM] Fe in [Frank-Kasper cage] coordination with [high CN] 16, [pure TM shell], [3D] [percolating]. The Pr ion is situated in a low-symmetry environment that forces alignment along the [axial] direction. [RE-TM] in [strong f-d contact] regime; exchange is [f-d], [strong], [ferromagnetic]. The moment is [mixed localized-itinerant] with [uniaxial crystal field].
+
+Gene #2 (B-Fe6 Trigonal Prism): A [TM-X coordination] of [light metalloid] B and [magnetic TM] Fe in [trigonal] coordination with [medium CN] 6, [pure TM shell], [3D] [percolating]. These units act as structural anchors [in-plane] to stabilize the transition metal framework and prevent phase competition. [TM-X] in [strong covalent] regime; exchange is [superexchange], [moderate], [ferromagnetic]. The moment is [itinerant] with [p-d hybridization].
+
+Gene #3 (Fe2-Fe2 Axial Dumbbells): A [local unit] of [magnetic TM] Fe in [dumbbell] coordination with [low CN], [pure TM shell], [3D] [percolating]. The dumbbells are oriented [axial] along the c-axis supporting the overall uniaxial symmetry of the system. [TM-TM] in [moderate direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [uniaxial crystal field].
+
+Gene #4 (Fe5-Fe5 3D Framework): A [TM scaffold] of [magnetic TM] Fe and [light RE weak 4f] Pr in [percolating] coordination with [medium CN], [mixed TM+RE shell], [3D] [percolating]. This extensive network connects the rare-earth cages and metalloid prisms [in-plane] and [axial] across the unit cell. [TM-TM] in [moderate direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [band broadening].
+
+Gene #5 (Fe1-Fe3-Fe4 Interstitial Channels): A [local unit] of [magnetic TM] Fe in [tetrahedral] coordination with [medium CN], [pure TM shell], [3D] [percolating]. These clusters form zigzag chains [across-layer] to bridge the gap between rare-earth rich layers and ensure vertical coupling. [TM-TM] in [moderate direct exchange] regime; exchange is [direct d-d], [moderate], [ferromagnetic]. The moment is [itinerant] with [magnetovolume effect].
+
+### 3) HARD MAGNET ASSESSMENT
+Anisotropy: strong – Pr ions in a non-cubic coordination cage provide high magnetocrystalline anisotropy via CEF interactions.
+Exchange: FM – Fe-Fe bond lengths (2.5-2.7 Å) are optimized for strong ferromagnetic direct exchange, avoiding AFM frustration.
+Stability: STABLE – The B-Fe6 trigonal prisms provide a robust chemical scaffold that stabilizes the 1:10:1 stoichiometry.
+Verdict: Hard magnet – The combination of Pr-driven anisotropy and a dense, FM-coupled Fe framework makes this a high-performance permanent magnet candidate.

@@ -1,16 +1,16 @@
 """Deterministic geometry helpers shared by the agents.
 
-* :func:`geometry_report` -- the tool output that aids CIF2Text (SI S1):
+* :func:`geometry_report` -- the tool output that aids CIF2Text:
   neighbour lists within 3.5 Angstrom under periodic boundary conditions and
   Voronoi coordination analysis per site, plus bond-length regimes.
-* :func:`bond_regime` -- the element-pair-agnostic regime of SI Table S1
+* :func:`bond_regime` -- the element-pair-agnostic bond regime
   (short / typical / long / non-bonded by d / (r_cov(A)+r_cov(B))).
-* :func:`validate_cif` -- Text2CIF's validity checks (SI S2): parseable
+* :func:`validate_cif` -- Text2CIF's validity checks: parseable
   syntax, full occupancy, integral atom counts, minimum interatomic distance.
 * :func:`structures_match` -- pymatgen ``StructureMatcher`` with the
-  tolerances of Methods 2 (acceptance) or SI S4.2 (reporting).
-* :func:`to_primitive`, :func:`prerelax_m3gnet` -- post-processing of a
-  valid Text2CIF structure before re-translation (SI S2).
+  acceptance tolerances (round trip) or reporting tolerances (fidelity).
+* :func:`to_primitive`, :class:`M3GNetRelaxer` -- post-processing of a
+  valid Text2CIF structure before re-translation.
 """
 
 from __future__ import annotations
@@ -26,17 +26,17 @@ from pymatgen.core import Composition, Element, Structure
 
 log = logging.getLogger(__name__)
 
-NEIGHBOR_CUTOFF = 3.5           # Angstrom, SI S1
-MIN_INTERATOMIC_DISTANCE = 1.5  # Angstrom, SI S2
+NEIGHBOR_CUTOFF = 3.5           # Angstrom: neighbour-list cutoff of the geometry tool
+MIN_INTERATOMIC_DISTANCE = 1.5  # Angstrom: minimum interatomic distance accepted in a generated CIF
 
-# Methods 2: acceptance tolerances of the round-trip test
+# acceptance tolerances of the round-trip test (Structure Translate)
 ACCEPT_TOLERANCES = dict(ltol=0.4, stol=0.7, angle_tol=15.0)
-# SI S4.2 / Experiment 1: tolerances under which generative models report match rates
+# reporting tolerances: the StructureMatcher setting under which generative models report match rates
 REPORT_TOLERANCES = dict(ltol=0.3, stol=0.5, angle_tol=10.0)
 
 
 # ---------------------------------------------------------------------------
-# bond regimes (SI Table S1)
+# bond regimes (short / typical / long / non-bonded by d / (r_cov(A)+r_cov(B)))
 # ---------------------------------------------------------------------------
 def covalent_radius(el: str) -> float:
     """Covalent radius in Angstrom (Cordero et al. 2008, Dalton Trans. 2832, as tabulated in pymatgen)."""
@@ -130,7 +130,7 @@ def geometry_report(structure: Structure, cutoff: float = NEIGHBOR_CUTOFF, max_n
 
 
 # ---------------------------------------------------------------------------
-# CIF validity (SI S2)
+# CIF validity
 # ---------------------------------------------------------------------------
 def parse_cif(cif_text: str) -> Tuple[Optional[Structure], Optional[str]]:
     """Parse CIF text; return ``(structure, None)`` or ``(None, error)``."""
@@ -159,7 +159,7 @@ def validate_cif(
     expected_composition: Optional[str] = None,
     min_dist: float = MIN_INTERATOMIC_DISTANCE,
 ) -> Tuple[Optional[Structure], Optional[str]]:
-    """Text2CIF validity checks of SI S2.
+    """Text2CIF validity checks.
 
     Returns ``(structure, None)`` when the CIF passes, else ``(None, issue)``
     with the specific problem to be returned to the agent as ``##ISSUE##``.
@@ -213,7 +213,7 @@ def make_matcher(ltol: float, stol: float, angle_tol: float) -> StructureMatcher
 
 
 def structures_match(s1: Structure, s2: Structure, tolerances: Optional[Dict[str, float]] = None) -> bool:
-    """``StructureMatcher(S, S')`` of Methods 2 (acceptance tolerances by default)."""
+    """``StructureMatcher(S, S')`` of the round trip (acceptance tolerances by default)."""
     tol = tolerances or ACCEPT_TOLERANCES
     try:
         return bool(make_matcher(**tol).fit(s1, s2))
@@ -246,7 +246,7 @@ def rmsd(s1: Structure, s2: Structure, tolerances: Optional[Dict[str, float]] = 
 
 
 # ---------------------------------------------------------------------------
-# post-processing of a valid Text2CIF structure (SI S2)
+# post-processing of a valid Text2CIF structure
 # ---------------------------------------------------------------------------
 def to_primitive(structure: Structure) -> Structure:
     """Reduce to the primitive cell, keeping the input if the formula would change."""
@@ -259,15 +259,19 @@ def to_primitive(structure: Structure) -> Structure:
     return structure
 
 
+DEFAULT_M3GNET = "M3GNet-PES-MatPES-PBE-2025.2"
+
+
 class M3GNetRelaxer:
-    """Light M3GNet pre-relaxation (matgl ``M3GNet-MP-2021.2.8-PES``).
+    """Light M3GNet pre-relaxation (matgl universal potential; the reported runs used ``M3GNet-MP-2021.2.8-PES``,
+    which matgl no longer distributes -- the default is its MatPES-PBE retraining).
 
     A valid Text2CIF structure is pre-relaxed before re-translation so the
-    coverage check sees a physically reasonable geometry (SI S2).  If matgl
+    coverage check sees a physically reasonable geometry.  If matgl
     is not installed the relaxer is a no-op and logs a warning once.
     """
 
-    def __init__(self, fmax: float = 1.0, steps: int = 100, model: str = "M3GNet-MP-2021.2.8-PES") -> None:
+    def __init__(self, fmax: float = 1.0, steps: int = 100, model: str = DEFAULT_M3GNET) -> None:
         self.fmax, self.steps, self.model_name = fmax, steps, model
         self._relaxer = None
         self._tried = False
@@ -293,5 +297,3 @@ class M3GNetRelaxer:
             return structure
 
 
-def prerelax_m3gnet(structure: Structure, relaxer: Optional[M3GNetRelaxer] = None) -> Structure:
-    return (relaxer or M3GNetRelaxer())(structure)

@@ -1,4 +1,4 @@
-"""Text2CIF: motif profile / design concept -> crystal structure (SI S2).
+"""Text2CIF: motif profile / design concept -> crystal structure.
 
 The agent receives an integral composition and the text description of the
 target motifs and returns a CIF.  Every proposed CIF is checked
@@ -7,7 +7,7 @@ minimum interatomic distance above 1.5 A); on failure the specific problem is
 returned to the agent marked ``##ISSUE##`` and generation is retried, up to a
 budget of five attempts (the inner validity loop).  A valid CIF is then
 pre-relaxed with M3GNet and reduced to its primitive cell before it is
-re-translated for the motif-coverage check (Methods 2 and 3).
+re-translated for the motif-coverage check (Structure Translate and Motif Translate).
 
 The outer loops (:func:`matevolve.translate.structure_translate` and
 :func:`matevolve.translate.motif_translate`) keep one :class:`Text2CIFSession`
@@ -30,7 +30,7 @@ from .base import Agent
 
 log = logging.getLogger(__name__)
 
-VALIDITY_BUDGET = 5   # SI S2: inner validity loop, five attempts
+VALIDITY_BUDGET = 5   # inner validity loop, five attempts
 
 
 @dataclass
@@ -53,7 +53,7 @@ class GenerationResult:
 
 
 class Text2CIF(Agent):
-    """Basis function Text2CIF of Methods 2/3."""
+    """Basis function Text2CIF: text -> structure."""
 
     def __init__(
         self,
@@ -80,7 +80,7 @@ class Text2CIF(Agent):
         session = self.new_session(composition, text_description)
         return session.generate(feedback)
 
-    # post-processing of a valid structure (SI S2) --------------------------
+    # post-processing of a valid structure --------------------------
     def postprocess(self, structure: Structure) -> Structure:
         if self.relaxer is not None:
             structure = self.relaxer(structure)

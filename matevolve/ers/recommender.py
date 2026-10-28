@@ -1,4 +1,4 @@
-"""Evidence-based Recommender System (ERS), Methods 5.
+"""Evidence-based Recommender System (ERS).
 
 Each observed structure is the *set* of motif groups it contains, with a
 binary target label (``True`` when it meets the design objective, e.g.
@@ -16,7 +16,7 @@ Dempster-Shafer mass function fused by Dempster's rule:
    candidate's mass; candidates are ranked by ``m({top})``.
 
 ``alpha`` is fixed by a grid search maximizing the cross-validated
-reproduction of the observed labels (``alpha = 0.1`` in the manuscript).
+reproduction of the observed labels (``alpha = 0.1`` in the reported runs).
 """
 
 from __future__ import annotations
@@ -94,13 +94,7 @@ class ERS:
         m = self._subst.get(key)
         return m.mass({SUB}) if m is not None else 0.0
 
-    def substitutability_table(self) -> List[Tuple[GroupSet, GroupSet, float, float, float]]:
-        """(C_t, C_v, m(sub), m(not sub), m(Omega)) for every pair with evidence."""
-        return [(k[0], k[1], m.mass({SUB}), m.mass({NOT_SUB}), m.mass(FRAME_SUB)) for k, m in self._subst.items()]
 
-    # ------------------------------------------------------------------
-    # stage 2: target belief
-    # ------------------------------------------------------------------
     def target_mass(self, candidate: Iterable[str], exclude: Optional[Iterable[str]] = None) -> MassFunction:
         """Fuse the evidence of every host that reaches ``candidate`` by one substitution."""
         s_new = frozenset(candidate)
@@ -170,20 +164,6 @@ class ERS:
 # ----------------------------------------------------------------------
 # helpers to build observations from a motif-group assignment table
 # ----------------------------------------------------------------------
-def observations_from_rows(rows: Iterable[Mapping[str, object]], id_col: str = "structure_id",
-                           groups_col: str = "motif_groups", label_col: str = "label",
-                           sep: str = "|") -> List[Observation]:
-    """Build observations from dict rows; ``motif_groups`` is a ``sep``-joined string or a list."""
-    out: List[Observation] = []
-    for r in rows:
-        g = r[groups_col]
-        groups = [x.strip() for x in str(g).split(sep) if x.strip()] if isinstance(g, str) else list(g)
-        label = r[label_col]
-        if isinstance(label, str):
-            label = label.strip().lower() in ("1", "true", "yes", "stable", "top")
-        out.append(Observation.make(str(r[id_col]), groups, bool(label)))
-    return out
-
 
 def stability_label(e_hull: float, epsilon: float = 0.1) -> bool:
     """Target label used to prioritize the run: y = top iff E_hull <= epsilon (0.1 eV/atom)."""

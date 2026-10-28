@@ -1,4 +1,4 @@
-"""CIF2Text: crystal structure -> motif profile (SI S1).
+"""CIF2Text: crystal structure -> motif profile.
 
 Two prompt-based passes:
 
@@ -31,7 +31,12 @@ from .base import Agent
 
 log = logging.getLogger(__name__)
 
-STANDARDIZER_BATCH = 10   # motifs per standardizer call (SI S1 / skill: at most 10 per turn)
+STANDARDIZER_BATCH = 10   # motifs per standardizer call (at most 10 per turn)
+STANDARDIZER_RETRIES = 2  # further calls for motifs the standardizer skipped
+
+
+class StandardizationError(ValueError):
+    """The standardizer did not return a controlled-vocabulary paragraph for every motif."""
 
 
 class Standardizer(Agent):
@@ -64,21 +69,33 @@ class Standardizer(Agent):
                 out[idx] = body
         return out
 
-    def standardize(self, motifs: List[Motif]) -> List[Motif]:
+    def standardize(self, motifs: List[Motif], retries: int = STANDARDIZER_RETRIES) -> List[Motif]:
+        """Fill ``description_standardized`` of every motif; motifs the model skipped are asked again.
+
+        Raises :class:`StandardizationError` if paragraphs are still missing after
+        the retries: a profile must never carry raw text into the round trip.
+        """
         for start in range(0, len(motifs), STANDARDIZER_BATCH):
-            batch = motifs[start : start + STANDARDIZER_BATCH]
-            reply = self.call(self.messages(self._user_message(batch)))
-            parsed = self.parse(reply)
-            for m in batch:
-                if m.motif_id in parsed:
-                    m.description_standardized = parsed[m.motif_id]
-                else:
-                    log.warning("standardizer returned no paragraph for motif #%d", m.motif_id)
+            pending = motifs[start : start + STANDARDIZER_BATCH]
+            for attempt in range(retries + 1):
+                reply = self.call(self.messages(self._user_message(pending)))
+                parsed = self.parse(reply)
+                for m in pending:
+                    if m.motif_id in parsed:
+                        m.description_standardized = parsed[m.motif_id]
+                pending = [m for m in pending if not m.description_standardized]
+                if not pending:
+                    break
+                log.warning("standardizer returned no paragraph for motif(s) %s (attempt %d/%d)",
+                            [m.motif_id for m in pending], attempt + 1, retries + 1)
+            if pending:
+                raise StandardizationError(f"no standardized paragraph for motif(s) {[m.motif_id for m in pending]} "
+                                           f"after {retries + 1} attempts")
         return motifs
 
 
 class CIF2Text(Agent):
-    """Forward translation agent (basis function CIF2Text of Methods 2)."""
+    """Forward translation agent (basis function CIF2Text: structure -> text)."""
 
     def __init__(
         self,
@@ -138,5 +155,3 @@ class CIF2Text(Agent):
         )
         return profile
 
-    def translate_cif(self, cif_text: str, **kw) -> MotifProfile:
-        return self.translate(Structure.from_str(cif_text, fmt="cif"), **kw)

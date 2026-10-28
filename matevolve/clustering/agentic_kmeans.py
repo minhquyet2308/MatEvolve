@@ -1,4 +1,4 @@
-"""MotifCluster: agentic consensus clustering of motifs (Methods 4, Algorithm 4).
+"""MotifCluster: agentic consensus clustering of motifs.
 
 An agentic version of K-means in which each group is represented by a
 *prototype* -- a short paragraph summarizing its motifs -- and language-model
@@ -228,11 +228,23 @@ class MotifCluster:
     # ------------------------------------------------------------------
     # main loop
     # ------------------------------------------------------------------
+    def resume(self) -> bool:
+        """Reload ``work_dir/checkpoint.json`` (prototypes, history, id counter); True if one existed."""
+        ck = self.work_dir / "checkpoint.json"
+        if not ck.is_file():
+            return False
+        state = json.loads(ck.read_text())
+        self.prototypes = {p["cluster_id"]: Prototype(**p) for p in state["prototypes"]}
+        self.history = [RoundStats(**h) for h in state["history"]]
+        self._next_id = state.get("next_id", max(self.prototypes, default=0) + 1)
+        log.info("resumed clustering at round %d with K=%d", state["round"], len(self.prototypes))
+        return True
+
     def run(self) -> Dict[str, object]:
         if not self.prototypes:
             self.seed()
         previous: Optional[Dict[str, object]] = None
-        for round_no in range(1, self.cfg.max_rounds + 1):
+        for round_no in range(len(self.history) + 1, self.cfg.max_rounds + 1):
             # E-step: the assignment of this round refers to the current prototypes
             t = self.e_step(round_no)
             ari = adjusted_rand_index(previous, t.assignment) if previous is not None else None
@@ -291,7 +303,7 @@ class MotifCluster:
         """Vote new motifs into the *fixed* groups (E-step only; the vocabulary does not change).
 
         Used after clustering to express every candidate as a set of motif
-        groups for the ERS (Methods 5: "the groups were fixed after clustering,
+        groups for the ERS (the groups are fixed after clustering,
         and each candidate's motifs were assigned to them before scoring").
         Returns motif id -> cluster id or 'none'.
         """

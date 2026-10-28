@@ -1,4 +1,4 @@
-"""Coverage(T, T'): the motif-coverage check of Methods 2.
+"""Coverage(T, T'): the motif-coverage check of the translation round trips.
 
 Two directional containment passes are judged by the language model and
 turned into numbers deterministically:
@@ -9,8 +9,8 @@ turned into numbers deterministically:
 The profile pair passes when ``r == 1`` and ``p >= 0.7``.  A motif of T that
 T' splits into finer pieces counts as present (many-to-one coverage is
 allowed), and a per-motif confidence below ``min_conf`` (0.6) does not count
-as a cover.  The same routine is used by Structure Translate (Methods 2) and
-Motif Translate (Methods 3).
+as a cover.  The same routine is used by Structure Translate and
+Motif Translate.
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ def score_coverage(
 
 
 class CoverageJudge(Agent):
-    """LLM containment judge + deterministic scorer (``Coverage`` of Methods 2)."""
+    """LLM containment judge + deterministic scorer (``Coverage(T, T')``)."""
 
     def __init__(self, llm: LLMClient, temperature: Optional[float] = None,
                  precision_threshold: float = PRECISION_THRESHOLD, min_conf: float = MIN_CONFIDENCE) -> None:

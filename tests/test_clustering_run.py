@@ -41,3 +41,16 @@ def test_cluster_converges_and_assignment_matches_prototypes(tmp_path):
     assign = frozen.assign_frozen({"new1": MOTIFS["new1"]})
     cage_id = [int(k) for k, g in result["groups"].items() if g["label"] == "cage"][0]
     assert assign == {"new1": cage_id}
+
+
+def test_interrupted_clustering_resumes_from_checkpoint(tmp_path):
+    """init --cluster: a run stopped after the seed round continues from checkpoint.json with the same prototypes."""
+    first = MotifCluster(ScriptedClient(responder=responder), MOTIFS, tmp_path, ClusterConfig(batch_size=3, seed_sample=8))
+    first.seed()                                                   # writes checkpoint.json (round 0) and stops
+    assert (tmp_path / "checkpoint.json").is_file() and len(first.prototypes) == 2
+    second = MotifCluster(ScriptedClient(responder=responder), MOTIFS, tmp_path, ClusterConfig(batch_size=3, seed_sample=8))
+    assert second.resume() is True
+    assert {p.label for p in second.prototypes.values()} == {"cage", "layer"} and second.history == []
+    result = second.run()                                          # continues with the reloaded prototypes
+    assert result["K"] == 2 and len(result["history"]) == 3
+    assert MotifCluster(ScriptedClient(responder=responder), MOTIFS, tmp_path / "empty").resume() is False

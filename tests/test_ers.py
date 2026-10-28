@@ -1,4 +1,4 @@
-"""Dempster-Shafer machinery and the ERS of Methods 5."""
+"""Dempster-Shafer machinery and the ERS."""
 
 import math
 
@@ -82,3 +82,14 @@ def test_grid_search_runs():
     data = [Observation.make(f"s{i}", ["a", "b"] if i % 2 else ["a", "c"], bool(i % 2)) for i in range(12)]
     best, scores = ERS.grid_search_alpha(data, grid=(0.1, 0.5), k_folds=3)
     assert best in (0.1, 0.5) and set(scores) == {0.1, 0.5}
+
+
+def test_dempster_stays_normalized_under_many_combinations():
+    """Thousands of conflicting pieces of evidence on one pair must not let the masses drift (real-data regression)."""
+    from matevolve.ers.mass_function import MassFunction
+    frame = ("sub", "not_sub")
+    m = MassFunction(frame, {frozenset(["sub"]): 0.1})
+    for i in range(20000):
+        focal = "not_sub" if i % 7 == 0 else "sub"
+        m = m.combine(MassFunction(frame, {frozenset([focal]): 0.1}))
+    assert abs(sum(m.values()) - 1.0) < 1e-9 and 0.0 <= m.mass({"sub"}) <= 1.0

@@ -1,4 +1,4 @@
-"""Coverage(T, T') of Methods 2: recall = 1 and precision >= 0.7."""
+"""Coverage(T, T'): recall = 1 and precision >= 0.7."""
 
 import json
 

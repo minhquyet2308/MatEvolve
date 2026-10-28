@@ -26,7 +26,7 @@ from typing import Callable, Dict, List, Optional, Sequence
 Message = Dict[str, str]
 log = logging.getLogger(__name__)
 
-#: Model and decoding temperature used for every agent in the manuscript.
+#: Model and decoding temperature used for every agent in the reported runs.
 DEFAULT_MODEL = "claude-fable-5"
 DEFAULT_TEMPERATURE = 0.5
 
@@ -61,15 +61,22 @@ def _split_system(messages: Sequence[Message]):
     return "\n\n".join(system_parts), rest
 
 
+class EmptyReply(RuntimeError):
+    """The model returned no text; treated as a transient error and retried."""
+
+
 class AnthropicClient(LLMClient):
     """Claude models through the official ``anthropic`` SDK.
 
     Parameters
     ----------
     model:
-        API identifier; the manuscript used ``claude-fable-5``.
+        API identifier; the reported runs used ``claude-fable-5``.
     temperature:
-        Decoding temperature; 0.5 throughout the manuscript.
+        Decoding temperature; 0.5 in the reported runs.  SDK versions >= 1.0
+        no longer expose it on ``Messages.create``; it is then passed through
+        ``extra_body`` and, if the API of the model rejects it, dropped with a
+        warning (the model default applies).
     max_tokens:
         Generation budget.  CIF files for 100-atom cells need several
         thousand tokens, hence the generous default.
@@ -99,22 +106,55 @@ class AnthropicClient(LLMClient):
         self.max_tokens = max_tokens
         self.max_retries = max_retries
 
+    _temperature_unsupported = False       # set once the API has rejected the parameter (class-wide)
+
+    def _supports_temperature_kwarg(self) -> bool:
+        """``anthropic`` < 1.0 exposes ``temperature`` on ``Messages.create``; later SDKs do not."""
+        import inspect
+        try:
+            return "temperature" in inspect.signature(self._client.messages.create).parameters
+        except (TypeError, ValueError):  # pragma: no cover
+            return False
+
     def complete(self, messages: Sequence[Message], temperature: Optional[float] = None) -> str:
         system, rest = _split_system(messages)
+        t = self.temperature if temperature is None else temperature
         kwargs = dict(
             model=self.model,
             max_tokens=self.max_tokens,
-            temperature=self.temperature if temperature is None else temperature,
             messages=[{"role": m["role"], "content": m["content"]} for m in rest],
         )
         if system:
             kwargs["system"] = system
+        if t is not None and not self._temperature_unsupported:
+            if self._supports_temperature_kwarg():
+                kwargs["temperature"] = t
+            else:
+                kwargs["extra_body"] = {"temperature": t}      # SDK >= 1.0: pass it through to the API
         delay = 2.0
         for attempt in range(self.max_retries):
             try:
                 resp = self._client.messages.create(**kwargs)
-                return "".join(block.text for block in resp.content if getattr(block, "type", "") == "text").strip()
-            except Exception as exc:  # transient errors: rate limit, overload, network
+                text = "".join(block.text for block in resp.content if getattr(block, "type", "") == "text").strip()
+                if text:
+                    return text
+                # no text block (e.g. the model stopped before writing any): a transient failure, retried below
+                raise EmptyReply(f"empty reply (stop_reason={getattr(resp, 'stop_reason', None)!r}, "
+                                 f"{len(resp.content)} content blocks)")
+            except TypeError:
+                raise                                          # a programming error, not a transient API failure
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                if status == 400 and "temperature" in str(exc).lower() and ("temperature" in kwargs or "extra_body" in kwargs):
+                    # the Messages API of this model does not accept a sampling temperature
+                    AnthropicClient._temperature_unsupported = True
+                    kwargs.pop("temperature", None)
+                    kwargs.pop("extra_body", None)
+                    log.warning("the Messages API of %s does not accept a 'temperature' parameter; the same model is "
+                                "used with its built-in default sampling (requested T=%.2f cannot be set)", self.model, t)
+                    continue
+                if status is not None and 400 <= status < 500 and status not in (408, 409, 429):
+                    raise                                      # bad request / auth: retrying cannot help
                 if attempt == self.max_retries - 1:
                     raise
                 log.warning("Anthropic API error (%s); retry %d in %.0fs", exc, attempt + 1, delay)
@@ -152,6 +192,8 @@ class OpenAICompatibleClient(LLMClient):
         )
         self.max_tokens = max_tokens
         self.max_retries = max_retries
+
+    _temperature_unsupported = False       # set once the API has rejected the parameter (class-wide)
 
     def complete(self, messages: Sequence[Message], temperature: Optional[float] = None) -> str:
         delay = 2.0

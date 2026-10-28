@@ -1,11 +1,11 @@
-"""Deterministic arithmetic of the agentic consensus clustering (Methods 4).
+"""Deterministic arithmetic of the agentic consensus clustering.
 
 Only the categorical votes and the prototype summaries come from the
 language model; everything here -- consensus, confusion, contested
 fraction, every merge/split/birth decision, ARI and the stopping rule -- is
 plain counting.
 
-Notation (Methods 4): R workers vote each motif i into a group g or ``none``;
+Notation: R workers vote each motif i into a group g or ``none``;
 ``n_ig`` workers chose g.
 
 * consensus            s_i   = max_g n_ig / R
@@ -28,7 +28,7 @@ from typing import Dict, Hashable, Iterable, List, Mapping, Optional, Sequence, 
 NONE = "none"
 Label = Hashable  # int cluster id or the string "none"
 
-# constants of Methods 4
+# constants of the clustering rules
 R_WORKERS = 5
 S_STAR = 0.6            # consensus below which a member is contested
 PHI_MERGE = 0.5         # confusion threshold
@@ -62,7 +62,7 @@ class Tally:
 def tally(votes: Mapping[str, Sequence[Label]], R: int = R_WORKERS) -> Tally:
     """Dominant label and consensus s_i = max_g n_ig / R for every motif.
 
-    The maximum runs over the groups g (Methods 4): a motif is assigned to the
+    The maximum runs over the groups g: a motif is assigned to the
     group with the most votes when that group out-votes ``none``, otherwise it
     is an outlier (``none``), and its consensus is the share of the strongest
     group in either case, so repeated ``none`` votes lower s_i.  Missing votes
@@ -150,7 +150,7 @@ class Decisions:
 def decide(t: Tally, phi_merge: float = PHI_MERGE, min_confuse: int = MIN_CONFUSE, q_split: float = Q_SPLIT,
            leak_concentration: float = LEAK_CONCENTRATION, s_star: float = S_STAR,
            outlier_floor: int = OUTLIER_FLOOR, min_split_size: int = 4) -> Decisions:
-    """The M-step decisions of Methods 4 from one round of votes."""
+    """The M-step decisions (merge / split / birth) from one round of votes."""
     conf = confusion(t)
     merge_pairs: List[Tuple[Label, Label]] = [
         (g, h) for (g, h), (phi, n) in conf.items() if phi >= phi_merge and n >= min_confuse
@@ -188,7 +188,7 @@ def decide(t: Tally, phi_merge: float = PHI_MERGE, min_confuse: int = MIN_CONFUS
 
 
 def adjusted_rand_index(a: Mapping[str, Label], b: Mapping[str, Label]) -> float:
-    """Hubert-Arabie ARI between two assignments of the same motifs (Methods 4)."""
+    """Hubert-Arabie ARI between two assignments of the same motifs."""
     ids = sorted(set(a) & set(b))
     n = len(ids)
     if n < 2:

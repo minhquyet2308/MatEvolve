@@ -1,4 +1,4 @@
-"""Dempster-Shafer mass functions and Dempster's rule of combination (Methods 5)."""
+"""Dempster-Shafer mass functions and Dempster's rule of combination."""
 
 from __future__ import annotations
 
@@ -62,9 +62,12 @@ class MassFunction(dict):
                     acc[inter] = acc.get(inter, 0.0) + v1 * v2
                 else:
                     conflict += v1 * v2
-        if conflict >= 1.0 - 1e-15:
+        # normalize by the surviving mass (= 1 - K in exact arithmetic).  Dividing by the
+        # separately accumulated 1 - K instead lets rounding errors grow geometrically when
+        # thousands of pieces of evidence are fused and m(Omega) has shrunk to ~1e-20.
+        norm = sum(acc.values())
+        if norm <= 1e-300:
             raise ZeroDivisionError("total conflict: Dempster's rule is undefined")
-        norm = 1.0 - conflict
         out = MassFunction(self.frame)
         out.clear()
         for h, v in acc.items():
@@ -75,13 +78,6 @@ class MassFunction(dict):
     def __matmul__(self, other: "MassFunction") -> "MassFunction":  # m1 @ m2
         return self.combine(other)
 
-    def pignistic(self) -> Dict[Hashable, float]:
-        """BetP(x) = sum_{h ∋ x} m(h)/|h|."""
-        out = {x: 0.0 for x in self.frame}
-        for h, v in self.items():
-            for x in h:
-                out[x] += v / len(h)
-        return out
 
     def __repr__(self) -> str:  # pragma: no cover
         items = ", ".join(f"{{{','.join(map(str, sorted(h, key=str)))}}}: {v:.4f}" for h, v in sorted(self.items(), key=lambda kv: len(kv[0])))
@@ -96,6 +92,3 @@ def combine_all(masses: Iterable[MassFunction], frame: Iterable[Hashable]) -> Ma
     return out
 
 
-def simple_support(frame: Tuple[Hashable, Hashable], focal: Hashable, weight: float) -> MassFunction:
-    """A simple support function on a binary frame: ``weight`` on ``{focal}``, rest on Omega."""
-    return MassFunction(frame, {frozenset([focal]): weight})

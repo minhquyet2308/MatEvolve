@@ -1,40 +1,43 @@
-# MatEvolve configuration of the permanent-magnet run reported in the manuscript.
-# Every number below is stated in the Methods / Supplementary Information; the
+# MatEvolve configuration of the reported permanent-magnet run.
+# Every number below is a setting of that run; the
 # comments give the section.
 
-llm:                                   # Section 2.2: one frozen commercial model for every agent
+llm:                                   # one frozen model for every agent
   provider: anthropic
   model: claude-fable-5
   temperature: 0.5
   max_tokens: 16000
   api_key_env: ANTHROPIC_API_KEY
 
-translate:                             # Methods 2-3, SI S1-S2
+translate:                             # Structure Translate / Motif Translate
   geometry_tool: true                  # CIF2Text aided by neighbour lists (3.5 A, PBC) + Voronoi CN
   standardize: true                    # second pass into the controlled vocabulary
   validity_budget: 5                   # Text2CIF inner validity loop
   min_distance: 1.5                    # A, minimum interatomic distance
-  prerelax: true                       # M3GNet pre-relaxation of a valid CIF
+  prerelax: true                       # M3GNet pre-relaxation of a valid CIF before it is re-translated
+  prerelax_model: M3GNet-PES-MatPES-PBE-2025.2   # matgl potential, fetched from the Hugging Face org 'materialyze' on first use.
+                                                 # The reported runs used M3GNet-MP-2021.2.8-PES (no longer distributed); this is
+                                                 # the same architecture retrained on MatPES-PBE. 'check' lists the names on offer.
   prerelax_fmax: 1.0
   prerelax_steps: 100
   primitive: true                      # reduce to the primitive cell
-  translate_budget: 5                  # Algorithm 2 outer loop
-  realize_budget: 5                    # Algorithm 3 outer loop
+  translate_budget: 5                  # Structure Translate: outer attempts
+  realize_budget: 5                    # Motif Translate: outer attempts
   precision_threshold: 0.7             # Coverage: recall = 1, precision >= 0.7
   min_confidence: 0.6
   matcher_tolerances: {ltol: 0.4, stol: 0.7, angle_tol: 15}
 
-loop:                                  # Methods 1
+loop:                                  # the generation loop
   n_generations: 4
   offspring_per_generation: 200
   dft_budget_per_generation: 100
   parent_pool_size: 200                # 200 lowest E_hull x 200 highest mu0Ms
   operator: CROSSOVER                  # mutation operators available but not applied in this run
   stability_epsilon: 0.1               # eV/atom, ERS target label and SUN
-  ers_alpha: 0.1                       # Methods 5 (grid search)
+  ers_alpha: 0.1                       # ERS discount (re-selected by grid search with 'score --grid-search-alpha')
   export_unselected: true              # also hand the ERS-unselected proposals to DFT (diagnostics, outside the loop)
 
-clustering:                            # Methods 4
+clustering:                            # agentic consensus clustering of motifs
   R: 5
   seed_k0: 12
   batch_size: 100
@@ -43,13 +46,20 @@ clustering:                            # Methods 4
   s_min: 0.8
   ari_min: 0.95
   stable_rounds: 2
-  clusters_json: data/motif_groups/clusters.json   # frozen 17-group vocabulary used by the ERS
+  clusters_json: database/motif_groups/clusters.json   # frozen 17-group vocabulary (ships with the database; init --cluster rebuilds it if absent)
 
-dft:                                   # Methods 6: relaxations run by the separate DFT tool (SI S8 parameters);
-  mp_api_key_env: MP_API_KEY           # here only the post-processing of its results (hull, magnetization)
-  hull_cache: data/mp_hull_cache
+database:                              # the pool: data.csv + <id>.cif + <id>.txt per structure
+  csv: database/data.csv
+  columns:                             # names in data.csv (defaults = the authors' table)
+    id: new_material_id
+    e_hull: energy_above_hull          # eV/atom, from the external DFT tool
+    mu0ms: mu0M_T_corrected            # tesla, from the external DFT tool
+    groups: set_names                  # motif groups, '|'-separated
+    profile_file: profile_file         # written by 'update'
+    formula: formula
+    spacegroup: spacegroup_number      # optional, read by 'score': duplicate class = reduced formula + space group (else computed from the CIF)
+    novel: unseen                      # optional, read by 'score': no StructureMatcher match in MP ∪ Alexandria (external evaluation)
+    new_prototype: new_prototype       # optional, read by 'score': prototype label absent from the reference
 
-evaluation:                            # SI S4.1
-  stability_epsilon: 0.1
-  magnetization_tau: 1.0               # tesla
-  reference_db: data/reference/dref.sqlite   # Materials Project + Alexandria, indexed by formula
+# DFT relaxations and property calculations are done by a separate tool;
+# this code only exports candidates (gen_XX/dft/) and reads the properties back from data.csv.

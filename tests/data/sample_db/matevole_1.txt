@@ -1,0 +1,12 @@
+==== MATERIAL GENES ====
+
+Gene #1: A [RE cage] of [heavy RE strong spin-orbit] Sm and [magnetic TM] Fe in [monoclinic] coordination with [high CN] 18-20, [pure TM shell], [3D] [uniaxial]. Sm atoms occupy high-coordination sites within transition-metal cages at specific z-heights. [RE-TM] in [moderate metallic contact] regime; exchange is [f-d], [moderate], [ferromagnetic]. The moment is [localized] with [uniaxial crystal field] and [spin-orbit coupling].
+
+Gene #2: A [local unit] of [magnetic TM] Fe and [heavy RE strong spin-orbit] Sm in [dumbbell] coordination with [low CN], [pure TM shell], [3D] [monoclinic]. Fe-Fe pairs replace Sm atoms in the underlying sublattice to accommodate high transition metal concentration and drive cell distortion. [TM-TM] in [strong direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [Stoner criterion].
+
+Gene #3: A [sublattice arrangement] of [non-magnetic stabilizer] V and [magnetic TM] Fe in [Frank-Kasper cage] coordination with [medium CN], [pure TM shell], [3D] [percolating]. V atoms preferentially occupy specific transition metal sites to act as structural anchors for phase stability. [TM-TM] in [moderate direct exchange] regime; exchange is [direct d-d], [moderate], [ferrimagnetic]. The moment is [induced] with [band broadening].
+
+Gene #4: A [TM scaffold] of [magnetic TM] Fe in [Frank-Kasper cage] coordination with [medium CN] 8-12, [pure TM shell], [3D] [percolating]. Fe atoms form a dense interconnected network with high connectivity across the unit cell. [TM-TM] in [strong direct exchange] regime with secondary TM-TM in [moderate direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [magnetovolume effect].
+
+Gene #5: A [layer arrangement] of [heavy RE strong spin-orbit] Sm and [magnetic TM] Fe in [mixed cage] coordination with [high CN], [mixed TM+RE shell], [3D] [monoclinic]. The structure consists of alternating structural blocks of ThMn12-type and Th2Zn17-type phases stacked along the lattice periodicity. [RE-TM] in [moderate metallic contact] regime, [TM-TM] in [strong direct exchange] regime; exchange is [f-d], [moderate], [ferromagnetic]. The moment is [mixed localized-itinerant] with [uniaxial crystal field].
+

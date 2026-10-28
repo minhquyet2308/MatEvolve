@@ -1,9 +1,9 @@
-"""Structure Translate and Motif Translate (Methods 2 and 3).
+"""Structure Translate and Motif Translate (Structure Translate and Motif Translate).
 
 Both loops are built from the same basis agents, CIF2Text and Text2CIF,
 and the same Coverage check.
 
-Algorithm 2 -- ``structure_translate(S)``::
+Structure Translate -- ``structure_translate(S)``::
 
     feedback <- empty
     for i = 1..5:
@@ -14,7 +14,7 @@ Algorithm 2 -- ``structure_translate(S)``::
         feedback <- missing/spurious motifs; composition or symmetry mismatch
     return reject
 
-Algorithm 3 -- ``motif_translate(T_off)``::
+Motif Translate -- ``motif_translate(T_off)``::
 
     feedback <- empty
     for j = 1..5:
@@ -25,7 +25,7 @@ Algorithm 3 -- ``motif_translate(T_off)``::
     return reject
 
 Coverage is applied before StructureMatcher because it directly tests the
-defining building blocks (Methods 2).  Acceptance tolerances of the
+defining building blocks.  Acceptance tolerances of the
 StructureMatcher are ltol 0.4, stol 0.7, angle_tol 15 degrees.
 """
 
@@ -46,8 +46,8 @@ from .profile import DesignConcept, MotifProfile
 
 log = logging.getLogger(__name__)
 
-TRANSLATE_BUDGET = 5   # Methods 2
-REALIZE_BUDGET = 5     # Methods 3
+TRANSLATE_BUDGET = 5   # Structure Translate: outer attempts
+REALIZE_BUDGET = 5     # Motif Translate: outer attempts
 
 
 @dataclass
@@ -112,7 +112,7 @@ class RealizeResult:
 
 
 def _symmetry_feedback(s: Structure, s_prime: Structure) -> List[str]:
-    """Composition / symmetry mismatch lines for the CIF2Text feedback (Algorithm 2)."""
+    """Composition / symmetry mismatch lines for the CIF2Text feedback (Structure Translate)."""
     notes: List[str] = []
     if s.composition.reduced_formula != s_prime.composition.reduced_formula:
         notes.append(f"composition mismatch: original {s.composition.reduced_formula}, rebuilt {s_prime.composition.reduced_formula}")
@@ -130,7 +130,7 @@ def _symmetry_feedback(s: Structure, s_prime: Structure) -> List[str]:
 
 
 class Translator:
-    """Holds the three agents and runs Algorithms 2 and 3."""
+    """Holds the three agents and runs the two translation loops."""
 
     def __init__(self, cif2text: CIF2Text, text2cif: Text2CIF, coverage: CoverageJudge,
                  translate_budget: int = TRANSLATE_BUDGET, realize_budget: int = REALIZE_BUDGET,
@@ -143,7 +143,7 @@ class Translator:
         self.matcher_tolerances = matcher_tolerances or dict(ACCEPT_TOLERANCES)
 
     # ------------------------------------------------------------------
-    # Algorithm 2
+    # Structure Translate
     # ------------------------------------------------------------------
     def structure_translate(self, structure: Structure, source: Optional[str] = None) -> TranslateResult:
         """Forward translation with bidirectional-consistency enforcement."""
@@ -153,7 +153,12 @@ class Translator:
         last_rebuilt: Optional[Structure] = None
         for i in range(1, self.translate_budget + 1):
             log.info("StructureTranslate %s attempt %d/%d", source or "", i, self.translate_budget)
-            profile = self.cif2text.translate(structure, feedback=feedback, source=source)
+            try:
+                profile = self.cif2text.translate(structure, feedback=feedback, source=source)
+            except ValueError as exc:                      # no motifs / standardization failed
+                log.warning("StructureTranslate %s attempt %d: CIF2Text failed (%s)", source or "", i, exc)
+                attempts.append(TranslateAttempt(i, None, None, None, None, None, f"CIF2Text failed: {exc}"))
+                continue
             last_profile = profile
             gen = self.text2cif.generate(profile.composition, profile.text_description())
             if not gen.ok:
@@ -164,7 +169,13 @@ class Translator:
                 continue
             s_prime = gen.structure
             last_rebuilt = s_prime
-            t_prime = self.cif2text.translate(s_prime, source=f"{source or 'S'}:rebuilt")
+            try:
+                t_prime = self.cif2text.translate(s_prime, source=f"{source or 'S'}:rebuilt")
+            except ValueError as exc:
+                fb = f"the rebuilt structure could not be re-profiled ({exc})"
+                attempts.append(TranslateAttempt(i, profile.to_dict(), s_prime.to(fmt="cif"), None, None, None, fb))
+                feedback = None                            # not the profile's fault: retry the same design
+                continue
             cov = self.coverage.compare(profile, t_prime)
             matched = structures_match(structure, s_prime, self.matcher_tolerances) if cov.passed else None
             if cov.passed and matched:
@@ -185,7 +196,7 @@ class Translator:
         return TranslateResult(False, last_profile, last_rebuilt, attempts)
 
     # ------------------------------------------------------------------
-    # Algorithm 3
+    # Motif Translate
     # ------------------------------------------------------------------
     def motif_translate(self, design: DesignConcept) -> RealizeResult:
         """Realize an offspring profile ``T_off`` as a candidate crystal ``S_off``."""
@@ -202,7 +213,13 @@ class Translator:
                 feedback = None  # the validity issues are already in the conversation
                 continue
             s_off = gen.structure
-            t_prime = self.cif2text.translate(s_off, source=f"design:{design.composition}")
+            try:
+                t_prime = self.cif2text.translate(s_off, source=f"design:{design.composition}")
+            except ValueError as exc:                      # re-profiling failed: the attempt is not accepted
+                log.warning("MotifTranslate %s attempt %d: CIF2Text failed (%s)", design.composition, j, exc)
+                attempts.append(RealizeAttempt(j, gen.cif_raw, s_off.to(fmt="cif"), None, None, issues, f"CIF2Text failed: {exc}"))
+                feedback = None
+                continue
             cov = self.coverage.compare(target, t_prime)
             if cov.passed:
                 attempts.append(RealizeAttempt(j, gen.cif_raw, s_off.to(fmt="cif"), t_prime.to_dict(), cov.to_dict(), issues))

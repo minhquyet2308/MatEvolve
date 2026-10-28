@@ -1,4 +1,4 @@
-"""Algorithms 2 and 3 driven by a scripted model (no API calls)."""
+"""Structure Translate and Motif Translate driven by a scripted model (no API calls)."""
 
 import json
 
@@ -105,3 +105,23 @@ def test_evo_operator_parses_strict_json(bcc_fe):
     assert len(designs) == 1 and designs[0].composition == "Fe" and designs[0].parents == ["p1", "p2"]
     user = llm.calls[-1][1]["content"]
     assert "## PARENT A" in user and "## PARENT B" in user and "CROSSOVER" in user
+
+
+def test_standardizer_retries_and_refuses_raw_text():
+    """A profile never carries raw motif text: skipped motifs are asked again, and a persistent gap is an error."""
+    import pytest
+    from matevolve.agents.cif2text import Standardizer, StandardizationError
+    from matevolve.profile import Motif
+
+    replies = iter(["", "Motif #1: A [cage] of [center] Sm ...", "Motif #1: A [cage] of [center] Sm ..."])   # motif #2 never comes
+    llm = ScriptedClient(responder=lambda messages: next(replies))
+    motifs = [Motif(1, "a", "raw one"), Motif(2, "b", "raw two")]
+    with pytest.raises(StandardizationError):
+        Standardizer(llm).standardize(motifs, retries=2)
+    assert motifs[0].description_standardized.startswith("A [cage]") and motifs[1].description_standardized == ""
+
+    # all paragraphs present after one retry -> success
+    replies = iter(["Motif #1: A [cage] of [center] Sm ...", "Motif #2: A [layer] of [framework] Fe ..."])
+    motifs = [Motif(1, "a", "raw one"), Motif(2, "b", "raw two")]
+    out = Standardizer(ScriptedClient(responder=lambda m: next(replies))).standardize(motifs, retries=2)
+    assert all(m.description_standardized for m in out) and "raw" not in out[1].text

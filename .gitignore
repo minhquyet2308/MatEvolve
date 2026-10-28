@@ -7,7 +7,14 @@ dist/
 .ipynb_checkpoints/
 .DS_Store
 runs/
-data/
+/data/
 *.sqlite
 conversations.jsonl
 .env
+
+# data never goes to GitHub: only the source code is published
+database/
+*.cif
+!tests/data/**/*.cif
+*.tgz
+*.zip

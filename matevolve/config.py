@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 import yaml
 
 from .agents import CIF2Text, CoverageJudge, EvoOperator, Text2CIF
-from .geometry import M3GNetRelaxer
+from .geometry import DEFAULT_M3GNET, M3GNetRelaxer
 from .llm import LLMClient, LLMConfig, RecordingClient
 from .translate import Translator
 
@@ -27,7 +27,8 @@ def build_llm(cfg: Dict[str, Any], log_path: Optional[Path] = None, step: str = 
 
 def build_translator(cfg: Dict[str, Any], llm: LLMClient) -> Translator:
     t = cfg.get("translate") or {}
-    relaxer = M3GNetRelaxer(fmax=t.get("prerelax_fmax", 1.0), steps=t.get("prerelax_steps", 100)) if t.get("prerelax", True) else None
+    relaxer = (M3GNetRelaxer(fmax=t.get("prerelax_fmax", 1.0), steps=t.get("prerelax_steps", 100),
+                             model=t.get("prerelax_model", DEFAULT_M3GNET)) if t.get("prerelax", True) else None)
     cif2text = CIF2Text(llm, use_geometry_tool=t.get("geometry_tool", True), standardize=t.get("standardize", True))
     text2cif = Text2CIF(llm, validity_budget=t.get("validity_budget", 5), min_distance=t.get("min_distance", 1.5),
                         prerelax=relaxer is not None, relaxer=relaxer, reduce_to_primitive=t.get("primitive", True))

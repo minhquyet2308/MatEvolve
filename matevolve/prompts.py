@@ -1,9 +1,9 @@
 """Prompt templates.
 
 Every prompt the agents send is stored verbatim as a text file under
-``prompts/`` (the same files reproduced in Supplementary Information
-S1-S3) and loaded here.  Nothing in the Python code edits the wording, so
-a reader can diff ``prompts/`` against the manuscript directly.
+``prompts/`` and loaded here.  Nothing in the Python code edits the wording,
+so the exact text each agent receives can be read (and compared with the
+published prompts) directly from those files.
 """
 
 from __future__ import annotations

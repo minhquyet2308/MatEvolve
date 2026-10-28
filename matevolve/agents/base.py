@@ -14,7 +14,7 @@ class Agent:
     """An agent is a language model plus a fixed system prompt.
 
     Subclasses build the user message(s) for their task and parse the reply.
-    ``temperature`` defaults to the client's (0.5 in the manuscript) so the
+    ``temperature`` defaults to the client's (0.5 for the reported runs) so the
     same decoding setting applies to every agent unless overridden.
     """
 

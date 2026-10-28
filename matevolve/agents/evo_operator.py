@@ -1,4 +1,4 @@
-"""EvoOperator: the design agent that edits motif profiles (Methods 3, SI S3).
+"""EvoOperator: the design agent that edits motif profiles.
 
 It reads the profiles of one or two parents and proposes an offspring
 profile ``T_off`` by one of three moves: CROSSOVER (two parents), ELEMENT

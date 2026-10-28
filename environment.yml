@@ -1,0 +1,20 @@
+# conda env create -f environment.yml && conda activate matevolve      (run from the repository root)
+name: matevolve
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pymatgen>=2024.1.1
+  - numpy
+  - scipy
+  - pyyaml
+  - pytest
+  - pytorch>=2.2            # from conda-forge, NOT pip: a pip torch wheel bundles its own OpenMP runtime and
+                            # aborts on macOS with "OMP: Error #15" next to conda's llvm-openmp
+  - pip
+  - pip:
+      - anthropic>=0.40        # Claude API client (the model used in the manuscript)
+      - matgl>=1.0             # M3GNet pre-relaxation (SI S2); reuses the conda torch above, adds torch-geometric,
+                               # lightning, huggingface_hub. Weights download from the Hugging Face hub on first use.
+                               # Verify with: python scripts/run_matevolve.py check --config configs/magnet_run.yaml
+      - -e .                   # this package, editable: prompts/ are read from the checkout

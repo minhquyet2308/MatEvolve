@@ -23,9 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
-mp = ["mp-api>=0.40"]
 relax = ["matgl>=1.0"]
-cshm = ["cosymlib"]
 dev = ["pytest"]
 
 [tool.setuptools.packages.find]

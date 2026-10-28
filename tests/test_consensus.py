@@ -1,4 +1,4 @@
-"""Deterministic arithmetic of the agentic clustering (Methods 4)."""
+"""Deterministic arithmetic of the agentic clustering."""
 
 import math
 

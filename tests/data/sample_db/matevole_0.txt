@@ -1,0 +1,26 @@
+### 1) STRUCTURE OVERVIEW
+Formula: NdSmFe12Co5
+Structure Type: Th2Zn17-type (Rhombohedral 2:17)
+Space Group: R3
+Composition: 19 atoms per unit cell (Z=1), representing a rare-earth to transition-metal ratio of 2:17 with mixed Nd/Sm and Fe/Co ordering.
+Lattice Note: Rhombohedral primitive cell (a=6.38 Å, alpha=82.6°) which corresponds to the standard rhombohedral 2:17 phase; the angle indicates a slightly compressed c-axis in the hexagonal setting.
+Effective Symmetry: Physical symmetry is R-3m (No. 166), though represented in P1 to specify the distinct ordering of Nd/Sm on the 6c sites and Co on the 6c/9d sites.
+
+### 2) MATERIAL GENES
+Gene #1 (Co-Co Transition Metal Dumbbell): A [local unit] of [magnetic TM] Co, [magnetic TM] Fe, and [heavy RE strong spin-orbit] Nd in [dumbbell] coordination with [low CN], [pure TM shell], [3D] [percolating]. The dumbbell is [axial] aligned along the rhombohedral axis acting as a structural anchor for the transition metal sublattice. [TM-TM] in [strong direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [band narrowing].
+
+Gene #2 (Nd-TM19 Coordination Polyhedron): A [RE cage] of [heavy RE strong spin-orbit] Nd, [magnetic TM] Fe, and [magnetic TM] Co in [Frank-Kasper cage] coordination with [very high CN] 19, [pure TM shell], [3D] [percolating]. The spatial arrangement of the transition metal cage around the rare-earth site determines the [uniaxial] crystal field and anisotropy sign. [RE-TM] in [strong f-d contact] regime; exchange is [f-d], [moderate], [ferromagnetic]. The moment is [mixed localized-itinerant] with [uniaxial crystal field].
+
+Gene #3 (Sm-TM19 Coordination Polyhedron): A [RE cage] of [heavy RE strong spin-orbit] Sm, [heavy RE strong spin-orbit] Nd, [magnetic TM] Fe, and [magnetic TM] Co in [Frank-Kasper cage] coordination with [very high CN] 19, [pure TM shell], [3D] [percolating]. The rare-earth site provides a competing anisotropy contribution to stabilize the magnetization direction against thermal fluctuations. [RE-TM] in [strong f-d contact] regime; exchange is [f-d], [strong], [ferromagnetic]. The moment is [mixed localized-itinerant] with [uniaxial crystal field] and [spin-orbit coupling].
+
+Gene #4 (Fe-Fe Kagome-like Framework (18f)): A [TM scaffold] of [magnetic TM] Fe in [kagome] coordination with [medium CN], [pure TM shell], [3D] [percolating]. The framework consists of interconnected triangles and hexagons forming a dense-packed network that contributes to the bulk saturation magnetization. [TM-TM] in [moderate direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [Stoner criterion].
+
+Gene #5 (Fe-Fe Triangular Network (18h)): A [local unit] of [magnetic TM] Fe in [isolated] coordination with [medium CN], [pure TM shell], [3D] [percolating]. Triangular clusters are [in-plane] in the basal planes and bridge the rare-earth polyhedra to ensure global structural stability. [TM-TM] in [moderate direct exchange] regime; exchange is [direct d-d], [moderate], [ferromagnetic]. The moment is [itinerant] with [magnetovolume effect].
+
+Gene #6 (Co-Fe 9d Exchange Bridge): A [layer arrangement] of [magnetic TM] Co and [magnetic TM] Fe in [isolated] coordination with [medium CN], [pure TM shell], [3D] [percolating]. Bridging atoms are [across-layer] between iron-rich planes to enhance inter-layer exchange coupling. [TM-TM] in [strong direct exchange] regime; exchange is [direct d-d], [strong], [ferromagnetic]. The moment is [itinerant] with [band broadening].
+
+### 3) HARD MAGNET ASSESSMENT
+Anisotropy: weak – The rhombohedral 2:17 structure with this Fe/Co ratio typically exhibits easy-plane anisotropy; Nd and Sm ions in these sites do not provide uniaxiality without interstitial modification.
+Exchange: FM – Strong ferromagnetic coupling is driven by direct 3d-3d exchange, significantly enhanced by Co substitution at the dumbbell and 9d sites.
+Stability: STABLE – The Th2Zn17-type structure is a robust equilibrium phase for RE-TM systems with a 2:17 stoichiometry.
+Verdict: soft – While possessing high magnetization and Curie temperature, the easy-plane anisotropy makes it a soft magnet unsuitable for permanent magnet applications without nitriding or carbonation.
