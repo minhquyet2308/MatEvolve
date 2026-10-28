@@ -1,6 +1,6 @@
 ---
 name: matevolve-motif-translate
-description: "Realize a MatEvolve motif profile or offspring design as a crystal structure (CIF) with the framework's coverage check: Text2CIF writes a CIF, deterministic Python validates it (parseable, full occupancy, minimum distance 1.5 A), pre-relaxes it with M3GNet and reduces it to the primitive cell, CIF2Text re-profiles it, and the coverage judge accepts only if every motif of the design is recovered (recall 1, precision >= 0.7); up to 5 attempts with '##ISSUE##' feedback. Runs scripts/run_matevolve.py motif-translate; the model replies are produced by worker sub-agents of this session. Use when the user has a motif profile (.txt / .profile.json) or a design.json and asks for a structure, a CIF, 'Text2CIF', or to realize a design."
+description: "Realize a MatEvolve motif profile or offspring design as a crystal structure (CIF) with the framework's coverage check: Text2CIF writes a CIF, deterministic Python validates it (parseable, full occupancy, minimum distance 1.5 A), pre-relaxes it with M3GNet and reduces it to the primitive cell, CIF2Text re-profiles it, and the coverage judge accepts only if every motif of the design is recovered (recall 1, precision >= 0.7); up to 5 attempts with '##ISSUE##' feedback. Runs scripts/run_matevolve.py motif-translate; the model replies are produced by worker sub-agents of this session. With --parents it first runs the design agent (crossover / mutation of two parent profiles) and then realizes the design. Use when the user has a motif profile (.txt / .profile.json) or a design.json and asks for a structure, a CIF, 'Text2CIF', to realize a design, or to cross two profiles into an offspring structure."
 ---
 
 # matevolve-motif-translate — motif profile / design → CIF (coverage checked)
@@ -19,6 +19,7 @@ Read `../README.md` first (the request / reply cycle).
 | Input | Type | Notes |
 |---|---|---|
 | `profile` | path | a `<id>.txt` profile, a `<id>.profile.json`, or a `design.json` of the design agent |
+| `parents` | paths | *instead of* `profile`: two (or more) parent profiles — the design agent edits them into one offspring design first (`--operator CROSSOVER` default, `'ELEMENT MUTATION'`, `'GEOMETRY MUTATION'`), saved as `design.json`, then realized |
 | `composition` | string | only if the profile file carries no `Composition:` line |
 | `out` | path | output folder; default `runs/matevolve/motif_translate/` |
 | `config` | path | `configs/agent_run.yaml` |
@@ -27,6 +28,7 @@ Read `../README.md` first (the request / reply cycle).
 
 ```
 S=python scripts/run_matevolve.py motif-translate --config configs/agent_run.yaml --profile <file> --out <out>
+S=python scripts/run_matevolve.py motif-translate --config configs/agent_run.yaml --parents <A.txt> <B.txt> --out <out>   # design first
 ```
 
 1. Run `$S`; when it ends with `MODEL REPLIES NEEDED`, answer the request files with worker sub-agents
@@ -38,8 +40,8 @@ Text2CIF requests may carry earlier assistant turns and `##ISSUE##` feedback —
 conversation. M3GNet needs `matgl` (`check` of the loop skill reports it); without it the structure is
 re-profiled unrelaxed.
 
-## Outputs (`<out>/<id>/`)
+## Outputs (`<out>/<id>/`, or `<out>/<A>+<B>/` with `--parents`)
 
-`final.cif` (pre-relaxed, primitive cell), `final_raw_llm.cif` (as Text2CIF wrote it), `reprofile.json`
+`design.json` (with `--parents`: the design agent's composition, motifs and text), `final.cif` (pre-relaxed, primitive cell), `final_raw_llm.cif` (as Text2CIF wrote it), `reprofile.json`
 (the profile of the realized structure), `attempts.json` (validity issues and coverage per attempt),
 `summary.json`. Report acceptance, attempts, composition and atom count of `final.cif`.

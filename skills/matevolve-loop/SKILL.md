@@ -1,6 +1,6 @@
 ---
 name: matevolve-loop
-description: "Run the MatEvolve generation loop as a skill: init (seed database, translation of structures without profiles), generate (parents -> design agent -> Motif Translate -> 200 offspring), rank (after the motif groups are assigned: ERS ranking by plausibility of stability, export of the top 100 for the external DFT tool), update (Structure Translate of the relaxed structures), score (benchmark report). Executes the framework's own Python (scripts/run_matevolve.py with configs/agent_run.yaml); the model replies are produced by worker sub-agents of this session; motif grouping is delegated to the matevolve-cluster skill; DFT is external. Use when the user wants to start or continue a MatEvolve design run, generate a new generation, rank and export offspring, update after DFT, or get the run's metrics."
+description: "Run the MatEvolve generation loop as a skill: init (seed database, translation of structures without profiles), generate (parents -> design agent -> Motif Translate -> 200 offspring), rank (after the motif groups are assigned: ERS ranking by plausibility of stability, export of the top 100 for the external DFT tool), update (Structure Translate of the relaxed structures), score (benchmark report), template (empty database of a new study). Executes the framework's own Python (scripts/run_matevolve.py with configs/agent_run.yaml); the model replies are produced by worker sub-agents of this session; motif grouping is delegated to the matevolve-cluster skill; DFT is external. Use when the user wants to start or continue a MatEvolve design run, generate a new generation, rank and export offspring, update after DFT, or get the run's metrics."
 ---
 
 # matevolve-loop — the generation loop
@@ -20,7 +20,7 @@ loop itself.
 |---|---|---|
 | `config` | path | `configs/agent_run.yaml` (or a copy for another study: database path, columns, vocabulary) |
 | `run` | path | run directory, e.g. `runs/magnet`; the same for every command of one run |
-| `command` | `init` \| `generate` \| `rank` \| `update` \| `score` \| `check` | what the user asks for; the generation number is read from the database |
+| `command` | `init` \| `generate` \| `rank` \| `update` \| `score` \| `check` \| `template` | what the user asks for; the generation number is read from the database |
 | `parallel` | int | chains advanced per cycle (default `loop.parallel_chains` = 6) |
 
 ## Workflow
@@ -28,6 +28,10 @@ loop itself.
 Every command is run as `python scripts/run_matevolve.py <command> --config <config> --run <run>`; whenever it
 ends with `MODEL REPLIES NEEDED`, answer the requests (worker sub-agents with `../references/worker_prompt.md`,
 waves of 3–6 per message, orchestrator writes the `reply_file`s) and re-run the same command until it does not.
+
+**template** — no model calls: `template --config <config> --cifs <dir> --out <database folder>` writes the empty
+`data.csv` of a new study (one row per CIF) and copies the CIFs; the user then fills `energy_above_hull` and the
+property column before `init`.
 
 **check** — verifies the installation (`check --llm` is a no-op for the model in agent mode). Run it first.
 

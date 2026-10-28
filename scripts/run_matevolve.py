@@ -48,6 +48,8 @@ The translators on their own (no database needed):
     structure-translate --cif FILE_OR_DIR   Structure Translate: CIF -> motif profile (+ rebuilt CIF; StructureMatcher verdict and RMSD
                                             of the rebuilt structure at ltol 0.3 / stol 0.5 / 10 deg are printed)
     motif-translate     --profile FILE      Motif Translate: motif profile (.txt / .json / design.json) -> CIF
+    motif-translate     --parents A.txt B.txt   motif editing first: the design agent crosses the parent profiles
+                                            (--operator CROSSOVER) into one design, which is then realized -> CIF
 
 Examples::
 
@@ -311,6 +313,42 @@ def translate_cli(args) -> None:
         report_pending(llm, f"python scripts/run_matevolve.py structure-translate --config {args.config} --cif {args.cif} --out {out}")
         return
 
+    def load_profile(path: Path) -> MotifProfile:
+        if path.suffix == ".json":
+            return MotifProfile.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        prof = parse_profile_txt(path.read_text(encoding="utf-8"), composition=args.composition or "", source=path.stem)
+        if not prof.composition:
+            raise SystemExit(f"{path}: no 'Composition:' line -- pass --composition")
+        return prof
+
+    if getattr(args, "parents", None):                              # motif editing first: parents -> design -> structure
+        parents = [load_profile(Path(x)) for x in args.parents]
+        name = "+".join(p.source or Path(x).stem for p, x in zip(parents, args.parents))
+        sdir = out / name
+        sdir.mkdir(parents=True, exist_ok=True)
+        operator = build_operator(cfg, llm)
+        if isinstance(llm, AgentClient):
+            llm.chain = name
+        try:
+            if (sdir / "design.json").is_file():
+                design = DesignConcept.from_dict(json.loads((sdir / "design.json").read_text(encoding="utf-8")))
+            else:
+                designs = operator.propose(parents, operator=args.operator, max_designs=1)
+                if not designs:
+                    raise SystemExit("the design agent returned no usable design")
+                design = designs[0]
+                (sdir / "design.json").write_text(json.dumps(design.to_dict(), indent=1), encoding="utf-8")
+                print(f"design ({args.operator}): {design.composition}\n{design.text_description}")
+            res = translator.motif_translate(design)
+        except NeedReply:
+            report_pending(llm, f"python scripts/run_matevolve.py motif-translate --config {args.config} "
+                                f"--parents {' '.join(args.parents)} --out {out}")
+            return
+        res.save(sdir)
+        print(f"{name}: accepted={res.accepted} attempts={len(res.attempts)}"
+              + (f" -> {sdir / 'final.cif'}" if res.structure is not None else " (no valid structure)"))
+        return
+
     prof_path = Path(args.profile)
     if prof_path.suffix == ".json":
         d = json.loads(prof_path.read_text(encoding="utf-8"))
@@ -352,6 +390,9 @@ def main() -> None:
     ap.add_argument("--score", action="store_true", help="update: also write the ERS report")
     ap.add_argument("--cif", help="structure-translate: a CIF file or a folder of CIFs")
     ap.add_argument("--profile", help="motif-translate: a motif profile (<id>.txt, <id>.profile.json or design.json)")
+    ap.add_argument("--parents", nargs="+", help="motif-translate: two (or more) parent profiles -> the design agent edits them "
+                                                 "into one offspring design (--operator), which is then realized")
+    ap.add_argument("--operator", default="CROSSOVER", help="motif-translate --parents: CROSSOVER | 'ELEMENT MUTATION' | 'GEOMETRY MUTATION'")
     ap.add_argument("--composition", help="motif-translate: composition if the profile file has none")
     ap.add_argument("--out", help="structure-translate / motif-translate: output folder (default <run>/<step>); template: database folder")
     ap.add_argument("--cifs", help="template: folder of CIFs to list in data.csv (copied into the database folder)")
@@ -369,8 +410,8 @@ def main() -> None:
         template_cli(args)
         return
     if args.step in ("structure-translate", "motif-translate"):
-        if not (args.cif if args.step == "structure-translate" else args.profile):
-            ap.error(f"{args.step} needs --{'cif' if args.step == 'structure-translate' else 'profile'}")
+        if not (args.cif if args.step == "structure-translate" else (args.profile or args.parents)):
+            ap.error(f"{args.step} needs --{'cif' if args.step == 'structure-translate' else 'profile (or --parents)'}")
         translate_cli(args)
         return
     if args.step == "init":

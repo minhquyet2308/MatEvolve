@@ -45,6 +45,15 @@ def test_translate_commands(tmp_path, bcc_fe, monkeypatch):
                                 profile=str(sdir / "profile.json"), composition=None))
     assert json.loads((tmp_path / "mt2" / "profile" / "summary.json").read_text())["accepted"] is True
 
+    # Motif editing + Motif Translate: two parent profiles -> design agent -> structure (the section-2 chain)
+    cli.translate_cli(Namespace(step="motif-translate", config=str(cfg), run=str(tmp_path / "run"), out=str(tmp_path / "mt3"),
+                                profile=None, parents=[str(sdir / "Fe.txt"), str(sdir / "profile.json")], operator="CROSSOVER",
+                                composition=None))
+    ddir = next((tmp_path / "mt3").iterdir())
+    design = json.loads((ddir / "design.json").read_text())
+    assert design["operator"] == "CROSSOVER" and design["composition"]
+    assert (ddir / "final.cif").is_file() and json.loads((ddir / "summary.json").read_text())["accepted"] is True
+
 
 def test_template_command(tmp_path):
     cli = _cli()

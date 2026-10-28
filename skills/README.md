@@ -51,9 +51,13 @@ the API version's (the recommender is deterministic Dempster–Shafer arithmetic
 | skill | command it runs | model steps a worker answers |
 |---|---|---|
 | [`matevolve-structure-translate`](matevolve-structure-translate/SKILL.md) | `run_matevolve.py structure-translate` — CIF → motif profile, round-trip checked | CIF2Text extraction, standardizer, Text2CIF, coverage judge |
-| [`matevolve-motif-translate`](matevolve-motif-translate/SKILL.md) | `run_matevolve.py motif-translate` — motif profile / design → CIF, coverage checked | Text2CIF (+ repairs), CIF2Text re-profile, coverage judge |
+| [`matevolve-motif-translate`](matevolve-motif-translate/SKILL.md) | `run_matevolve.py motif-translate` — motif profile / design → CIF, coverage checked; `--parents A B`: design agent first | design agent (with `--parents`), Text2CIF (+ repairs), CIF2Text re-profile, coverage judge |
 | [`matevolve-loop`](matevolve-loop/SKILL.md) | `run_matevolve.py init / generate / rank / update / score` — the generation loop around the external DFT tool | design agent and the two translations in `init` / `generate` / `update`; `rank` and `score` need none (clustering and assignment are done by the next skill) |
 | [`matevolve-cluster`](matevolve-cluster/SKILL.md) | its own tool `scripts/cluster_tools.py` — motif clustering and assignment to the frozen groups | prototype seeding / updates, assignment votes |
+
+`python scripts/install_skills.py` links these folders into `.claude/skills/` and `.codex/skills/` (or, with `--user`, into
+`~/.claude/skills/` and `~/.codex/skills/`) so that Claude Code and Codex list them; Cowork users add the folders in the
+app's skill settings (README section 1.3).
 
 All four need the repository installed (`environment.yml`, `pip install -e .`) and are run from the repository root.
 The worker prompt is shared: [`references/worker_prompt.md`](references/worker_prompt.md).

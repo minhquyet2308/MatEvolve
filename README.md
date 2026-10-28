@@ -30,9 +30,9 @@ database ◄── translate ◄── external DFT tool ◄── export ◄─
 **Contents**
 
 1. [Installation](#1-installation) — 1.1 [Python environment](#11-python-environment) · 1.2 [Database](#12-database)
-   (1.2.1 [the database of the reported study](#121-pull-the-database-of-the-reported-study) · 1.2.2 [a new database for a new study](#122-prepare-a-new-database-for-a-new-study))
-2. [Example code of the core functions](#2-example-code-of-the-core-functions) — translators + design agent
-3. [The MatEvolve framework](#3-the-matevolve-framework) — 3.1 [key functions of `run_matevolve.py`](#31-key-functions-of-scriptsrun_matevolvepy) · 3.2 [basic scenario](#32-basic-scenario-from-an-initialized-database) · 3.3 [fresh scenario](#33-fresh-scenario-new-database-and-motif-clustering)
+   (1.2.1 [the database of the reported study](#121-pull-the-database-of-the-reported-study) · 1.2.2 [a new database for a new study](#122-prepare-a-new-database-for-a-new-study)) · 1.3 [Skills in Cowork / Claude Code / Codex](#13-skills-in-cowork--claude-code--codex)
+2. [Example code of the core functions](#2-example-code-of-the-core-functions) — translators + design agent; 2.1 [the same chain as skills](#21-the-same-chain-as-skills)
+3. [The MatEvolve framework](#3-the-matevolve-framework) — 3.1 [key functions of `run_matevolve.py`](#31-key-functions-of-scriptsrun_matevolvepy) · 3.2 [basic scenario](#32-basic-scenario-from-an-initialized-database) (3.2.1 [as skills](#321-the-same-run-as-skills)) · 3.3 [fresh scenario](#33-fresh-scenario-new-database-and-motif-clustering) (3.3.1 [as skills](#331-the-same-run-as-skills))
 4. [Configuration file](#4-configuration-file)
 5. [Skill version](#5-skill-version-the-framework-inside-a-claude-session) — the same code, model replies by the session instead of the API
 6. [Repository layout](#6-repository-layout)
@@ -150,6 +150,32 @@ column works, `database.columns.mu0ms` names it — the second parent pool is dr
 Everything else is written by the loop: `init` translates every structure into a motif profile, and the
 `matevolve-cluster` skill builds the motif-group vocabulary from those profiles ([3.3](#33-fresh-scenario-new-database-and-motif-clustering)).
 
+### 1.3 Skills in Cowork / Claude Code / Codex
+
+The framework can also be driven from a Claude (or Codex) session as **skills** — same code, the model replies
+written by the session instead of fetched from the API ([section 5](#5-skill-version-the-framework-inside-a-claude-session)).
+The four skills are the folders `skills/matevolve-structure-translate`, `skills/matevolve-motif-translate`,
+`skills/matevolve-loop` and `skills/matevolve-cluster`; each is a `SKILL.md` that calls the installed `matevolve`
+package, so 1.1 must be done first and the session must have the repository root as its working folder.
+
+```bash
+python scripts/install_skills.py            # Claude Code / Codex opened at the repository root: links in .claude/skills/ and .codex/skills/
+python scripts/install_skills.py --user     # any working folder: links in ~/.claude/skills/ and ~/.codex/skills/
+python scripts/install_skills.py --copy DIR # a plain copy of the four folders, e.g. to upload in Cowork
+```
+
+| Client | How the skills are found |
+|---|---|
+| **Claude Code** | `.claude/skills/<name>` (repository, first command) or `~/.claude/skills/<name>` (`--user`); the skills are listed as soon as the folder is opened |
+| **Codex CLI** | `.codex/skills/<name>` (repository) or `~/.codex/skills/<name>` (`--user`); `codex --list-skills` shows them |
+| **Cowork (Claude desktop app)** | connect the repository folder to the session and add the four skill folders in the app's skill settings (*Customize → Skills*, from a folder or as zips — `--copy` prepares them); the session's working folder must be the repository root |
+| any other client | copy or link the four folders into the client's skills directory (Agent-Skills layout: `<name>/SKILL.md`) |
+
+Then, in the session: `check` the installation once through the loop skill ("run the MatEvolve setup check"), and
+use `configs/agent_run.yaml` for every command — it is `magnet_run.yaml` with `llm.provider: agent`. No API key is
+needed in this mode. The skills can be called by name (`$matevolve-loop`, `/matevolve-loop`, depending on the
+client) or picked up from a plain request ("translate these CIFs into motif profiles").
+
 ---
 
 ## 2. Example code of the core functions
@@ -218,6 +244,28 @@ python scripts/run_matevolve.py motif-translate     --config configs/magnet_run.
 
 Every model message of a demo or a command is logged in `<out>/conversations.jsonl` (system prompt, user turns,
 replies), so each decision of an agent can be read afterwards.
+
+### 2.1 The same chain as skills
+
+In a session with the skills of 1.3, the chain of section 2 is two requests; the session runs the same
+`run_matevolve.py` commands and answers the agents' prompts itself (worker sub-agents, several in parallel):
+
+```
+You     Translate database/mp-1219022.cif and database/mp-1217843.cif into motif profiles (output runs/demo).
+Claude  [matevolve-structure-translate]  runs  structure-translate --config configs/agent_run.yaml --cif ... --out runs/demo
+        answers the CIF2Text / standardizer / Text2CIF / coverage requests until both chains are accepted, and reports:
+        accepted, attempts, StructureMatcher verdict and RMSD of the rebuilt structure, the profiles
+        (runs/demo/mp-1219022/mp-1219022.txt, runs/demo/mp-1217843/mp-1217843.txt)
+
+You     Cross the two profiles into one offspring design and realize it as a structure.
+Claude  [matevolve-motif-translate]  runs  motif-translate --config configs/agent_run.yaml
+                                           --parents runs/demo/mp-1219022/mp-1219022.txt runs/demo/mp-1217843/mp-1217843.txt --out runs/demo
+        answers the design-agent request (design.json), then the Text2CIF / CIF2Text / coverage requests, and reports:
+        the design (composition, motifs inherited from each parent), accepted, attempts, runs/demo/<A>+<B>/final.cif
+```
+
+`motif-translate --parents A.txt B.txt [--operator CROSSOVER]` is the command-line form of steps 2–3 of the Python
+example (design agent, then Motif Translate) and works the same with the API config.
 
 ---
 
@@ -291,6 +339,31 @@ Every `[skill]` line is printed by the preceding command with the exact paths. W
 commands continue the reported run: `init` finds nothing to translate, `score` reproduces the benchmark counts of
 the four generations, and `generate` starts generation 5.
 
+#### 3.2.1 The same run as skills
+
+The session runs the commands of 3.2 with `configs/agent_run.yaml` and supplies the model replies; `[skill]` steps
+are the `matevolve-cluster` skill in the same session. One generation, as a chat:
+
+```
+You     Check the MatEvolve installation.                                     → matevolve-loop: check
+You     Start a run in runs/magnet with configs/agent_run.yaml: run init.      → matevolve-loop: init   (step 0; nothing to translate for the seeds)
+You     Generate the next generation.                                          → matevolve-loop: generate   (step 1)
+Claude  proposes design steps in parallel chains, answers the design-agent / Text2CIF / CIF2Text / coverage
+        requests wave after wave until 200 offspring are accepted (hundreds of requests; resumable), then says
+        the offspring motifs must be assigned
+You     Assign the offspring motifs to the motif groups.                       → matevolve-cluster: init --dictionary … → votes → tally → apply --offspring
+You     Rank and export the offspring.                                         → matevolve-loop: rank   (step 2; no model calls) -> gen_01/dft/
+        ... you run the DFT tool; copy the relaxed <oid>.cif into database/, append the rows to data.csv ...
+You     The relaxed structures and properties are in the database: update.    → matevolve-loop: update   (step 3)
+You     Assign the new motifs to the motif groups.                             → matevolve-cluster: init --only-unassigned --dictionary … → apply --database
+You     Generate the next generation.                                          → step 1 again
+You     Report the metrics of the run.                                         → matevolve-loop: score   (any time; no model calls)
+```
+
+Each command stops with `MODEL REPLIES NEEDED` when replies are due; the loop skill answers them and re-runs the
+command until it completes, so one request from you covers one whole command. A session limit only pauses the run:
+the next "generate" (or "continue the run") picks it up from the files.
+
 ### 3.3 Fresh scenario (new database and motif clustering)
 
 For a new material family: a copy of the config pointing at the new database, the template, your DFT properties,
@@ -312,6 +385,23 @@ The clustering is the expensive step (the reported run clustered ≈ 11 000 moti
 checkpoints every round and resumes, and once `clusters.json` exists it is never rebuilt — later motifs are assigned
 to the fixed groups. The target property of the second parent pool is whatever `database.columns.mu0ms` points at, so
 a study with another objective only renames that column.
+
+#### 3.3.1 The same run as skills
+
+```
+You     Prepare a MatEvolve database from the CIFs in my_cifs/ into projects/my_study with configs/my_study.yaml.
+                                                                               → matevolve-loop: template  (then you fill the properties in data.csv)
+You     Check the setup with configs/my_study.yaml.                            → matevolve-loop: check
+You     Initialize the run runs/my_study.                                      → matevolve-loop: init   (step 0: Structure Translate of every structure,
+                                                                                 one chain each; ≈ 7 requests per structure and attempt)
+Claude  ... translates all structures, then says the motif-group vocabulary must be built
+You     Cluster the motifs of projects/my_study into motif groups.             → matevolve-cluster: init --mode pilot → seed → voting rounds until
+                                                                                 convergence → finalize → apply --database  (writes motif_groups/clusters.json)
+You     Generate the first generation.                                         → step 1, then as in 3.2.1
+```
+
+For the fresh scenario use a copy of `configs/agent_run.yaml` (not `magnet_run.yaml`) with the `database` and
+`clustering` blocks of the new study.
 
 ---
 
@@ -358,7 +448,7 @@ how the model is reached.
 | Skill | What it does | Python equivalent |
 |---|---|---|
 | `matevolve-structure-translate` | CIF → motif profile, round-trip checked | `run_matevolve.py structure-translate` |
-| `matevolve-motif-translate` | motif profile / design → CIF, coverage checked | `run_matevolve.py motif-translate` |
+| `matevolve-motif-translate` | motif profile / design → CIF, coverage checked; with parent profiles: design agent first | `run_matevolve.py motif-translate [--parents]` |
 | `matevolve-loop` | `init` · `generate` · `rank` · `update` · `score` around the external DFT tool | `run_matevolve.py init/generate/rank/update/score` |
 | `matevolve-cluster` | motif clustering (fresh database) and assignment to the frozen groups | — (skill in both versions) |
 
@@ -387,9 +477,9 @@ and prints `MODEL REPLIES NEEDED` with the request files; `loop.parallel_chains`
 chains wait at a time. Requests are identified by a hash of the conversation, so re-runs never re-ask what has
 been answered and a run resumes after a session limit. [`skills/README.md`](skills/README.md) describes the
 mechanism and the worker contract; each `skills/<name>/SKILL.md` gives the exact commands, inputs and outputs.
-To install the skills, copy (or symlink) the four folders into the client's skills directory; they call the
-`matevolve` package of the repository they live in, so the repository must be installed (Section 1.1) and the
-session must run from its root.
+Installation of the skills in Cowork, Claude Code and Codex is described in [1.3](#13-skills-in-cowork--claude-code--codex);
+chat templates for the section-2 chain and for the two run scenarios are in [2.1](#21-the-same-chain-as-skills),
+[3.2.1](#321-the-same-run-as-skills) and [3.3.1](#331-the-same-run-as-skills).
 
 The same mechanism works outside a skill: run any command with `--config configs/agent_run.yaml`, answer the
 request files by hand (or with another model), and re-run.
@@ -401,7 +491,7 @@ request files by hand (or with another model), and re-run.
 | Path | Content |
 |---|---|
 | `prompts/` | Every agent prompt verbatim: CIF2Text, standardizer (+ motif vocabulary), Text2CIF, design agent, coverage judge |
-| `skills/` | The framework as Claude **skills** (Section 5): `matevolve-structure-translate`, `matevolve-motif-translate`, `matevolve-loop` (each a `SKILL.md` that runs `run_matevolve.py` with the agent transport), `matevolve-cluster` (motif clustering / assignment: `SKILL.md`, worker prompts in `references/`, the stdlib metric engine `scripts/cluster_tools.py`), `README.md` (the exchange mechanism), `references/worker_prompt.md` |
+| `skills/` | The framework as Claude **skills** (Section 5; `scripts/install_skills.py` links them into `.claude/skills/` / `.codex/skills/` for Claude Code and Codex): `matevolve-structure-translate`, `matevolve-motif-translate`, `matevolve-loop` (each a `SKILL.md` that runs `run_matevolve.py` with the agent transport), `matevolve-cluster` (motif clustering / assignment: `SKILL.md`, worker prompts in `references/`, the stdlib metric engine `scripts/cluster_tools.py`), `README.md` (the exchange mechanism), `references/worker_prompt.md` |
 | `matevolve/llm.py` | LLM clients: `AnthropicClient` (Claude Fable 5), `OpenAICompatibleClient`, `AgentClient` (file exchange with the skill session), logging / scripted clients |
 | `matevolve/profile.py` | `MotifProfile` (composition + motifs), `DesignConcept` (an offspring design) |
 | `matevolve/geometry.py` | Deterministic geometry tool (neighbours ≤ 3.5 Å, Voronoi CN, bond regimes), CIF validity checks, `StructureMatcher` tolerances, M3GNet pre-relaxation, primitive cell |
@@ -411,7 +501,7 @@ request files by hand (or with another model), and re-run.
 | `matevolve/database.py` | The pool: `data.csv` + `<id>.cif` + `<id>.txt` motif profile per structure (column names configurable) |
 | `matevolve/dft_io.py` | Hand-off of candidates to the external DFT tool (one subfolder per structure) |
 | `matevolve/loop.py` | The generation loop as resumable steps: init → generate (propose) · *skill* → rank (ERS + export) → *DFT* → update (translate · *skill*); `score` report |
-| `scripts/` | `run_matevolve.py` (loop, translators, template, score, check) and `fetch_database.py` |
+| `scripts/` | `run_matevolve.py` (loop, translators, template, score, check), `fetch_database.py`, `install_skills.py` |
 | `examples/` | `components_demo.py`: the agents on two structures (translate → crossover → translate back); `ers_demo.py`: the recommender on the database, no model calls |
 | `configs/` | `magnet_run.yaml`: all settings of the reported permanent-magnet run; `agent_run.yaml`: the same with `llm.provider: agent` (skill version) |
 | `environment.yml`, `pyproject.toml` | conda environment / pip package definition |
