@@ -353,6 +353,7 @@ class LLMConfig:
     """Serializable description of a client (see ``configs/*.yaml``)."""
 
     provider: str = "anthropic"          # anthropic | openai | agent (replies supplied by the Claude session running a skill)
+                                         # | dummy (request-derived placeholder replies, no model: smoke tests)
     exchange: str = "runs/matevolve/llm"  # provider agent: folder of the request / reply files
     model: str = DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
@@ -369,6 +370,10 @@ class LLMConfig:
             return OpenAICompatibleClient(self.model, self.temperature, base_url=self.base_url, api_key=api_key, max_tokens=self.max_tokens)
         if self.provider == "agent":
             return AgentClient(Path(self.exchange), self.model, self.temperature)
+        if self.provider == "dummy":
+            from .dummy_llm import DummyClient
+
+            return DummyClient()
         raise ValueError(f"unknown LLM provider {self.provider!r}")
 
 

@@ -72,7 +72,7 @@ def test_agent_transport_reproduces_the_api_run(tmp_path, bcc_fe):
             break
         assert answer_pending(client, responder) > 0
     assert len(offspring) == 3 and [o["oid"] for o in offspring] == ["G01-001", "G01-002", "G01-003"]
-    assert all(Path(o["profile_path"]).is_file() for o in offspring)
+    assert all((tmp_path / "run" / "gen_01" / o["profile_path"]).is_file() for o in offspring)   # relative to gen_XX/
     # every exchange was logged once, and a re-run with all replies present asks nothing new
     log_lines = (tmp_path / "run" / "llm" / "conversations.jsonl").read_text().splitlines()
     assert len(log_lines) == 3 * len((tmp_path / "run" / "llm" / "used.txt").read_text().split())

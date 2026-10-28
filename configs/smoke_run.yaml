@@ -1,0 +1,53 @@
+# MatEvolve SMOKE-TEST configuration: no language model, no DFT, no credits.
+# Used by scripts/smoke_test.sh (the README 1.4 listing) to exercise the whole framework on a few structures in runs/smoke/.
+# llm.provider: dummy answers every agent prompt with a placeholder built from the request
+# (matevolve/dummy_llm.py); nothing produced with this file is a scientific result.
+
+llm:
+  provider: dummy                      # <- the only thing that makes this run a smoke test (anthropic | openai | agent otherwise)
+  model: dummy
+
+translate:                             # as in magnet_run.yaml, except that the M3GNet pre-relaxation is off by default
+  geometry_tool: true                  # (set prerelax: true to test the matgl installation as well)
+  standardize: true
+  validity_budget: 5
+  min_distance: 1.5
+  prerelax: false
+  prerelax_model: M3GNet-PES-MatPES-PBE-2025.2
+  prerelax_fmax: 1.0
+  prerelax_steps: 100
+  primitive: true
+  translate_budget: 5
+  realize_budget: 5
+  precision_threshold: 0.7
+  min_confidence: 0.6
+  matcher_tolerances: {ltol: 0.4, stol: 0.7, angle_tol: 15}
+
+loop:                                  # a miniature of the reported run: 2 generations of 6 offspring, 3 to 'DFT'
+  n_generations: 2
+  offspring_per_generation: 6
+  dft_budget_per_generation: 3
+  parent_pool_size: 3
+  operator: CROSSOVER
+  stability_epsilon: 0.1
+  ers_alpha: 0.01
+  ers_max_combination_size: 2
+  ers_rank_by: plausibility
+  export_unselected: true
+  group_prefix: G_
+
+clustering:
+  clusters_json: runs/smoke/database/motif_groups/clusters.json   # written by the dummy clustering step of the smoke test
+
+database:
+  csv: runs/smoke/database/data.csv    # a copy of tests/data/sample_db (or --database N structures of your database)
+  columns:
+    id: new_material_id
+    formula: formula
+    e_hull: energy_above_hull
+    mu0ms: mu0M_T_corrected
+    groups: set_names
+    profile_file: profile_file
+    spacegroup: spacegroup_number
+    novel: unseen
+    new_prototype: new_prototype

@@ -123,7 +123,8 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
     import pytest
     with pytest.raises(RuntimeError, match="no motif groups"):
         me.rank(1)
-    omotifs = [f"{o['oid']}:{m['motif_id']}" for o in offspring for m in json.loads(Path(o["profile_path"]).read_text())["motifs"]]
+    omotifs = [f"{o['oid']}:{m['motif_id']}" for o in offspring
+               for m in json.loads((tmp_path / "run" / "gen_01" / o["profile_path"]).read_text())["motifs"]]
     skill_assign(tmp_path / "skill_off", omotifs, 4, offspring=tmp_path / "run" / "gen_01" / "offspring.json")
     assert me.unassigned_offspring(1) == []
     assert len(me.rank(1)) == 3 and len(me.selected(1)) == 2

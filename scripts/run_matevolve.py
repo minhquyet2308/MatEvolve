@@ -69,6 +69,7 @@ import argparse
 import csv
 import json
 import logging
+import shlex
 import sys
 from pathlib import Path
 
@@ -84,9 +85,22 @@ SKILL = Path(__file__).resolve().parents[1] / "skills" / "matevolve-cluster"
 SKILL_TOOL = SKILL / "scripts" / "cluster_tools.py"
 
 
+DUMMY_NOTE = ("This folder was produced with llm.provider: dummy (matevolve/dummy_llm.py): every model reply is a placeholder "
+              "built from the request. Smoke test only -- nothing here is a scientific result.\n")
+
+
+def mark_dummy(cfg, folder: Path) -> None:
+    """Leave DUMMY_LLM.txt in a run / output folder produced without a language model."""
+    if (cfg.get("llm") or {}).get("provider") == "dummy":
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "DUMMY_LLM.txt").write_text(DUMMY_NOTE, encoding="utf-8")
+        print("DUMMY MODEL: llm.provider is 'dummy' -- placeholder replies, smoke test only")
+
+
 def build(args) -> MatEvolve:
     cfg = load_yaml(Path(args.config))
     run_dir = Path(args.run)
+    mark_dummy(cfg, run_dir)
     if (cfg.get("llm") or {}).get("provider") == "agent":
         cfg.setdefault("llm", {}).setdefault("exchange", str(run_dir / "llm"))   # <run>/llm/{pending,replies,...}
     llm = build_llm(cfg, run_dir / "logs" / "conversations.jsonl", step="matevolve")
@@ -101,25 +115,44 @@ def build(args) -> MatEvolve:
         loop_cfg.parallel_chains = args.parallel
     me = MatEvolve(run_dir, db, translator, operator, loop_cfg)
     me._clusters_path = Path((cfg.get("clustering") or {}).get("clusters_json", str(db.dir / "motif_groups" / "clusters.json")))  # type: ignore[attr-defined]
+    me._dummy = (cfg.get("llm") or {}).get("provider") == "dummy"  # type: ignore[attr-defined]
     return me
 
 
 def skill_step(me: MatEvolve, what: str, source: Path, state: Path, apply_target: str) -> str:
-    """The hand-over message to the matevolve-cluster skill (run in Claude: Cowork / Claude Code)."""
+    """The hand-over message to the matevolve-cluster skill (run in Claude: Cowork / Claude Code).
+    With llm.provider: dummy the same tool is driven without workers (``dummy-votes``), so the smoke test
+    can follow the printed commands literally."""
     vocab = me._clusters_path  # type: ignore[attr-defined]
     frozen = vocab.is_file()
+    dummy = getattr(me, "_dummy", False)
+    q = shlex.quote                                        # paths may contain spaces: the printed lines must be pasteable
+    tool, vocab_q, source_q, state_q = q(str(SKILL_TOOL)), q(str(vocab)), q(str(source)), q(str(state))
+    if dummy:
+        init = (f"python {tool} init --motifs {source_q} --state {state_q} --mode full"
+                + (f" --dictionary {vocab_q}" if frozen else "") + (" --only-unassigned" if source.is_dir() and frozen else ""))
+        return "\n".join([
+            f"next (DUMMY): {'assign the ' + what + ' to the frozen motif groups' if frozen else 'build the motif-group vocabulary from the ' + what}"
+            " without a model -- tag-based votes, smoke test only:",
+            f"  {init}",
+            f"  python {tool} passes      --state {state_q} --round 0",
+            f"  python {tool} dummy-votes --state {state_q} --round 0",
+            f"  python {tool} tally       --state {state_q} --round 0",
+            f"  python {tool} finalize    --state {state_q} --round 0",
+            f"  python {tool} apply       --state {state_q} {apply_target}",
+        ])
     head = (f"next: assign the {what} to the frozen motif groups with the matevolve-cluster skill"
             if frozen else f"next: build the motif-group vocabulary from the {what} with the matevolve-cluster skill")
-    init = (f"python {SKILL_TOOL} init --motifs {source} --state {state} --dictionary {vocab}"
+    init = (f"python {tool} init --motifs {source_q} --state {state_q} --dictionary {vocab_q}"
             + (" --only-unassigned" if source.is_dir() else "")) if frozen else \
-           f"python {SKILL_TOOL} init --motifs {source} --state {state} --mode pilot"
+           f"python {tool} init --motifs {source_q} --state {state_q} --mode pilot"
     return "\n".join([
         head,
         f"  open {SKILL / 'SKILL.md'} in a Claude session and follow it; the Python steps are:",
         f"  {init}",
-        f"  python {SKILL_TOOL} passes --state {state} --round 0      # then the worker votes, tally, "
+        f"  python {tool} passes --state {state_q} --round 0      # then the worker votes, tally, "
         + ("finalize" if frozen else "decide / converge ... finalize"),
-        f"  python {SKILL_TOOL} apply --state {state} {apply_target}",
+        f"  python {tool} apply --state {state_q} {apply_target}",
     ])
 
 
@@ -142,12 +175,12 @@ def report_pending(llm, command: str) -> bool:
 def step_init(args) -> None:
     me = build(args)
     me.init()
-    if report_pending(me._agent(), f"python scripts/run_matevolve.py init --config {args.config} --run {args.run}"):
+    if report_pending(me._agent(), f"python scripts/run_matevolve.py init --config {shlex.quote(str(args.config))} --run {shlex.quote(str(args.run))}"):
         return
     print(f"database: {len(me.db)} structures, {len(me.db.validated_ids())} with properties, "
           f"{len(me.db) - len(me.db.needs_profile())} with motif profiles, {len(me.db.needs_groups())} without motif groups")
     if me.needs_assignment():
-        print(skill_step(me, "database motifs", me.db.dir, Path(args.run) / "cluster_init", f"--database {me.db.dir}"))
+        print(skill_step(me, "database motifs", me.db.dir, Path(args.run) / "cluster_init", f"--database {shlex.quote(str(me.db.dir))}"))
     else:
         print("every structure has motif groups: run 'generate'")
 
@@ -169,11 +202,20 @@ def check_cli(args) -> None:
             line("ok", pkg, md.version(pkg))
         except md.PackageNotFoundError:
             line("MISSING", pkg); ok = False
-    line("ok" if os.environ.get("ANTHROPIC_API_KEY") else "MISSING", "ANTHROPIC_API_KEY",
-         "set" if os.environ.get("ANTHROPIC_API_KEY") else "export ANTHROPIC_API_KEY=... (needed for every model call)")
-    ok = ok and bool(os.environ.get("ANTHROPIC_API_KEY"))
-
     cfg = load_yaml(Path(args.config))
+    lcfg = cfg.get("llm") or {}
+    provider = lcfg.get("provider", "anthropic")
+    if provider == "dummy":
+        line("DUMMY", "model", "llm.provider: dummy -- placeholder replies built from each request, no language model; "
+             "SMOKE TEST ONLY, nothing this run produces is a result")
+    elif provider == "agent":
+        line("ok", "model", "llm.provider: agent -- replies are written by the Claude session running the skills (no API key needed)")
+    else:
+        key_env = lcfg.get("api_key_env", "ANTHROPIC_API_KEY")
+        line("ok" if os.environ.get(key_env) else "MISSING", key_env,
+             "set" if os.environ.get(key_env) else f"export {key_env}=... (needed for every model call)")
+        ok = ok and bool(os.environ.get(key_env))
+
     t = cfg.get("translate") or {}
     if t.get("prerelax", True):
         try:
@@ -219,6 +261,9 @@ def check_cli(args) -> None:
         llm = build_llm(cfg)
         if isinstance(llm, AgentClient):
             line("ok", "model", "provider 'agent': replies are written by the skill session, nothing to call")
+            llm = None
+        elif provider == "dummy":
+            line("DUMMY", "model", "provider 'dummy': nothing to call")
             llm = None
     if args.llm and llm is not None:
         try:
@@ -281,6 +326,7 @@ def translate_cli(args) -> None:
 
     cfg = load_yaml(Path(args.config))
     out = Path(args.out or Path(args.run) / args.step.replace("-", "_"))
+    mark_dummy(cfg, out)
     llm = build_llm(cfg, out / "conversations.jsonl", step=args.step)
     translator = build_translator(cfg, llm)
 
@@ -310,7 +356,7 @@ def translate_cli(args) -> None:
                 d = rmsd(s, res.rebuilt)
                 line += f" match={structures_match(s, res.rebuilt, REPORT_TOLERANCES)} rmsd={d if d is None else round(d, 3)}"
             print(line, "->", sdir)
-        report_pending(llm, f"python scripts/run_matevolve.py structure-translate --config {args.config} --cif {args.cif} --out {out}")
+        report_pending(llm, f"python scripts/run_matevolve.py structure-translate --config {args.config} --cif {shlex.quote(str(args.cif))} --out {shlex.quote(str(out))}")
         return
 
     def load_profile(path: Path) -> MotifProfile:
@@ -342,7 +388,7 @@ def translate_cli(args) -> None:
             res = translator.motif_translate(design)
         except NeedReply:
             report_pending(llm, f"python scripts/run_matevolve.py motif-translate --config {args.config} "
-                                f"--parents {' '.join(args.parents)} --out {out}")
+                                f"--parents {' '.join(shlex.quote(x) for x in args.parents)} --out {shlex.quote(str(out))}")
             return
         res.save(sdir)
         print(f"{name}: accepted={res.accepted} attempts={len(res.attempts)}"
@@ -371,7 +417,7 @@ def translate_cli(args) -> None:
     try:
         res = translator.motif_translate(design)
     except NeedReply:
-        report_pending(llm, f"python scripts/run_matevolve.py motif-translate --config {args.config} --profile {args.profile} --out {out}")
+        report_pending(llm, f"python scripts/run_matevolve.py motif-translate --config {args.config} --profile {shlex.quote(str(args.profile))} --out {shlex.quote(str(out))}")
         return
     sdir = out / prof_path.stem
     res.save(sdir)
@@ -401,6 +447,8 @@ def main() -> None:
     ap.add_argument("--parallel", type=int, default=None, help="agent transport: chains advanced per run (default loop.parallel_chains)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
+    import warnings
+    warnings.filterwarnings("ignore", message="Issues encountered while parsing CIF")   # pymatgen rounding notices
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
     if args.step == "check":
@@ -427,18 +475,18 @@ def main() -> None:
         pending = me.needs_assignment()
         if pending:
             raise SystemExit(f"{len(pending)} pool structures have a profile but no motif groups yet.\n"
-                             + skill_step(me, "database motifs", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {me.db.dir}"))
+                             + skill_step(me, "database motifs", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {shlex.quote(str(me.db.dir))}"))
         gdir = me.gen_dir(g)
         print(f"database: generations 0..{g - 1} present -> generating the offspring of generation {g}")
         offspring = me.propose(g)
-        if report_pending(me._agent(), f"python scripts/run_matevolve.py generate --config {args.config} --run {args.run}"):
+        if report_pending(me._agent(), f"python scripts/run_matevolve.py generate --config {shlex.quote(str(args.config))} --run {shlex.quote(str(args.run))}"):
             print(f"generation {g}: {len(offspring)}/{me.cfg.offspring_per_generation} offspring accepted so far")
             return
         print(f"generation {g}: {len(offspring)} offspring -> {gdir / 'offspring.json'}")
         if me.unassigned_offspring(g):
             print(skill_step(me, f"offspring of generation {g}", gdir / "offspring.json", gdir / "cluster_offspring",
-                             f"--offspring {gdir / 'offspring.json'}"))
-        print(f"then: python scripts/run_matevolve.py rank --config {args.config} --run {args.run}")
+                             f"--offspring {shlex.quote(str(gdir / 'offspring.json'))}"))
+        print(f"then: python scripts/run_matevolve.py rank --config {shlex.quote(str(args.config))} --run {shlex.quote(str(args.run))}")
     elif args.step == "rank":
         if g is None:
             g, why = me.generation_to_rank()
@@ -448,12 +496,17 @@ def main() -> None:
         if me.unassigned_offspring(g):
             raise SystemExit(f"generation {g}: {len(me.unassigned_offspring(g))} offspring have no motif groups yet.\n"
                              + skill_step(me, f"offspring of generation {g}", gdir / "offspring.json", gdir / "cluster_offspring",
-                                          f"--offspring {gdir / 'offspring.json'}"))
+                                          f"--offspring {shlex.quote(str(gdir / 'offspring.json'))}"))
         print(f"generation {g}: ranking {len(json.loads((gdir / 'offspring.json').read_text()))} offspring "
               f"(ERS alpha {me.cfg.ers_alpha}, by {me.cfg.ers_rank_by})")
-        for i, row in enumerate(me.rank(g)[:10], 1):
-            print(i, *row)
-        print("exported:", me.export(g), "-- run the DFT tool, add the relaxed structures to the database, then 'update'")
+        for i, (oid, m_t, m_n, m_o) in enumerate(me.rank(g)[:10], 1):
+            print(f"  {i:2d}. {oid:10s} m_stable={m_t:.3f} m_unstable={m_n:.3f} m_unknown={m_o:.3f}")
+        manifest = me.export(g)
+        if getattr(me, "_dummy", False):
+            print(f"exported: {manifest} -- DUMMY: python scripts/dummy_dft.py --config {shlex.quote(str(args.config))} --run {shlex.quote(str(args.run))}   "
+                  f"(placeholder properties instead of the DFT tool), then 'update'")
+        else:
+            print("exported:", manifest, "-- run the DFT tool, add the relaxed structures to the database, then 'update'")
     elif args.step == "update":
         if g is None:
             g, why = me.generation_to_update()
@@ -462,14 +515,14 @@ def main() -> None:
             print(f"database: newest generation is {g} -> updating generation {g}")
         n_t = me.translate_generation(g)
         print(f"{n_t} structures translated")
-        if report_pending(me._agent(), f"python scripts/run_matevolve.py update --config {args.config} --run {args.run}"):
+        if report_pending(me._agent(), f"python scripts/run_matevolve.py update --config {shlex.quote(str(args.config))} --run {shlex.quote(str(args.run))}"):
             return
         if args.score:
             me.score(grid_search_alpha=args.grid_search_alpha)
         ok, why = me.next_generation(g)
         print(why)
         if me.needs_assignment():
-            print(skill_step(me, "new structures", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {me.db.dir}"))
+            print(skill_step(me, "new structures", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {shlex.quote(str(me.db.dir))}"))
             print("then run 'generate' for the next generation")
     elif args.step == "score":
         print(json.dumps(me.score(grid_search_alpha=args.grid_search_alpha), indent=1))

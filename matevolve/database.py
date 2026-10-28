@@ -108,6 +108,9 @@ class Database:
     def get(self, sid: str) -> Dict[str, str]:
         return self._index[sid]
 
+    def __contains__(self, sid: object) -> bool:
+        return sid in self._index
+
     def add(self, sid: str, **values) -> Dict[str, str]:
         """Add (or update) a row; unknown keys become new columns."""
         row = self._index.get(sid)

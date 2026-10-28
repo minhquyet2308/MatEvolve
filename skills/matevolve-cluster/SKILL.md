@@ -54,6 +54,10 @@ and the flat list as `clusters_list.json`. With `--dictionary`, `init` loads the
 `clusters.json` (or a `prototypes.json`) and forces `--mode full`; do **not** run the M-step, birth, merge,
 split or converge in that case — the prototypes are frozen.
 
+`dummy-votes --state <dir> --round t` exists for the repository's smoke test only (`scripts/smoke_test.sh`): it
+fills a round's vote files from the motifs' vocabulary tags without any worker, creating tag-keyed prototypes if
+none exist. Never use it in a real clustering — its output is a tag partition, not the consensus of the workers.
+
 ## Inputs
 
 | Input | Type | Notes |

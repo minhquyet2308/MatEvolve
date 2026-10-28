@@ -41,6 +41,7 @@ unselected rows `generation` is a lower bound inferred from their parents (see t
 ```
 configs/magnet_run.yaml                every run setting (LLM, budgets, thresholds, database path and column names)
 configs/agent_run.yaml                 the same with llm.provider: agent -- the skill version (model replies exchanged as files)
+configs/smoke_run.yaml                 llm.provider: dummy + miniature budgets -- scripts/smoke_test.sh writes a complete example of this layout to runs/smoke/
 database/motif_groups/clusters.json    frozen motif-group vocabulary (clustering.clusters_json): the 17 groups of the reported run ship with the
                                        database (label, prototype, exemplars, members, outliers); written by the matevolve-cluster skill
                                        (`cluster_tools.py apply --database`) when a fresh database is clustered
@@ -59,11 +60,12 @@ runs/<name>/
 │   ├── pending/<id>.json              requests waiting for a reply: id, step, chain, system, messages, reply_file, instructions
 │   ├── replies/<id>.txt               the replies written by the session (or by hand); <id> = hash of the conversation
 │   ├── conversations.jsonl, used.txt  every answered exchange (same format as logs/conversations.jsonl), ids already logged
+├── DUMMY_LLM.txt                      present only in a run made with llm.provider: dummy (smoke test): nothing in the folder is a result
 ├── metrics.json                       optional `score` report — benchmark counts (stable, unique, novel, SUN, magnetic, new prototype,
 │                                      joint) for seeds, each generation (selected vs unselected) and all candidates; ERS evidence
 └── gen_XX/
     ├── offspring.json                 step 1 (`generate`) — accepted offspring: oid, cif (pre-relaxed, primitive), cif_raw, parents,
-    │                                  composition, motif_groups (filled by the skill's `apply --offspring`), profile_path (T′_off), design_step
+    │                                  composition, motif_groups (filled by the skill's `apply --offspring`), profile_path (T′_off, relative to gen_XX/), design_step
     ├── cluster_offspring/             state folder of the skill's assignment of the offspring motifs
     ├── design_steps/step_NNNN/        every design step, accepted or rejected
     │   ├── design.json                EvoOperator output: motifs, composition, text_description, parents, operator

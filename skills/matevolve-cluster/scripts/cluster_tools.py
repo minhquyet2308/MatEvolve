@@ -972,6 +972,49 @@ def cmd_consensus(a):
           f"({core} core); dictionary_consensus.json K={len(consensus)}; comparison.md written.")
 
 
+# ----------------------------------------------------------------------------- dummy votes (smoke test)
+_TAG = re.compile(r"\[[^\]]+\]")
+
+
+def _tag_key(text):
+    """The bracketed vocabulary tags of a motif text (CN-band tags left out), in order -- the 'geometry' a dummy worker sees."""
+    return " ".join(t for t in _TAG.findall(text) if "CN" not in t) or "[untagged]"
+
+
+def cmd_dummy_votes(a):
+    """Fill every vote file of a round WITHOUT a language model: each motif votes for the prototype whose tag key
+    equals its own (else 'none').  With no prototypes.json yet (fresh clustering), one prototype per distinct tag
+    key is created first (the most frequent keys, up to seed_k0).  For smoke tests of the MatEvolve loop only --
+    the result is a tag-based partition, not the consensus clustering of the skill."""
+    motifs = _read_json(os.path.join(a.state, "motifs.json"))
+    ck = _load_ckpt(a.state)
+    ppath = os.path.join(a.state, "prototypes.json")
+    if os.path.isfile(ppath):
+        protos = _read_json(ppath)
+    else:
+        counts = Counter(_tag_key(t) for t in motifs.values())
+        k0 = ck["params"].get("seed_k0") or 12
+        protos = []
+        for n, (key, _) in enumerate(counts.most_common(k0), 1):
+            ex = next(i for i, t in motifs.items() if _tag_key(t) == key)
+            protos.append({"cluster_id": n, "label": key, "prototype": motifs[ex], "exemplars": [ex], "born_round": 0})
+        _write_json(ppath, protos)
+        print(f"dummy-votes: {len(protos)} prototypes created from the {len(counts)} distinct tag keys (dummy, not a clustering)")
+    by_key = {}
+    for pr in protos:
+        by_key.setdefault(_tag_key(pr["prototype"]), pr["cluster_id"])
+    man = _read_json(os.path.join(_round_dir(a.state, a.round), "passes_manifest.json"))
+    n_votes = 0
+    for b in man["batches"]:
+        batch = _read_json(b["batch_file"])
+        votes = [{"id": m["id"], "label": by_key.get(_tag_key(m["text"]), "none")} for m in batch["motifs"]]
+        _write_json(b["vote_file"], {"pass": b["pass"], "batch": b["batch"], "votes": votes, "dummy": True})
+        n_votes += len(votes)
+    ck["dummy_votes"] = True
+    _save_ckpt(a.state, ck)
+    print(f"dummy-votes: round {a.round}: {n_votes} votes written for {len(man['batches'])} batch(es) -- DUMMY, no model")
+
+
 # ----------------------------------------------------------------------------- cli
 def main():
     ap = argparse.ArgumentParser(description="Metric engine for matevolve-cluster")
@@ -1007,6 +1050,11 @@ def main():
     pi.add_argument("--proto-stable-frac", type=float, default=1.0, dest="proto_stable_frac")
     pi.add_argument("--min-confuse", type=int, default=3, dest="min_confuse")
     pi.set_defaults(func=cmd_init)
+
+    pdv = sub.add_parser("dummy-votes", help="smoke test only: tag-based votes without a model (see cmd_dummy_votes)")
+    pdv.add_argument("--state", required=True)
+    pdv.add_argument("--round", type=int, default=0)
+    pdv.set_defaults(func=cmd_dummy_votes)
 
     pp = sub.add_parser("passes")
     pp.add_argument("--state", required=True)

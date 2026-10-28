@@ -212,7 +212,7 @@ class MatEvolve:
                               "cif_raw": (odir / "final_raw_llm.cif").read_text() if (odir / "final_raw_llm.cif").is_file() else None,
                               "parents": design.get("parents", []), "composition": design["composition"],
                               "motif_groups": old.get(n, {}).get("motif_groups", []),   # filled by the skill (apply --offspring)
-                              "profile_path": str(odir / "reprofile.json"), "design_step": n})
+                              "profile_path": str((odir / "reprofile.json").relative_to(gdir)), "design_step": n})   # relative to gen_XX/
         out_path.write_text(json.dumps(offspring, indent=1))
         return offspring
 
