@@ -228,13 +228,13 @@ external tool, one generation is **two commands with the DFT step between them**
 structures is a hand-over to the `matevolve-cluster` skill:
 
 ```
-                 ┌──────────────────────────────── generate ────────────────────────────────┐
+          ┌───────────────── generate ─────────────────┐              ┌──────── rank ────────┐
 database ──► parents ──► design agent ──► Motif Translate ──► 200 offspring ──[skill: assign motifs]──► ERS ranking ──► export 100
    ▲                                                                                                                      │
    │                                                                                                            external DFT tool
    │                                                                                                   (relax, E_hull, mu0Ms; not here)
    └──[skill: assign motifs]◄── Structure Translate ◄── relaxed CIFs + property rows appended to data.csv ◄───────────────┘
-                 └────────── update ──────────┘
+                └────────── update ──────────┘
 ```
 
 ### 3.1 Key functions
@@ -243,17 +243,18 @@ database ──► parents ──► design agent ──► Motif Translate ─�
 |---|---|---|---|---|
 | `check [--llm]` | — | verifies the installation: versions, API key, `matgl` + M3GNet weights (test relaxation), database and vocabulary files; `--llm` sends one message to the model | config | — |
 | `init` | 0 | stamps the structures without a generation as generation 0 (the seeds) and Structure-Translates every structure without a profile; then prints the `matevolve-cluster` commands if any structure still lacks motif groups (fresh database: full clustering; otherwise assignment to the frozen groups) | `data.csv`, CIFs | `<id>.txt`, `profile_file`, `generation`; `<run>/translate/<id>/` trails |
-| `generate` | 1 | **first call** — draws parents (one of the `parent_pool_size` lowest *E*<sub>hull</sub>, one of the highest μ<sub>0</sub>*M*<sub>s</sub>, seeded random), the design agent crosses their profiles into one design, Motif Translate realizes it; repeated until `offspring_per_generation` are accepted; then prints the skill commands that assign the offspring motifs to the groups | database, `clusters.json` | `gen_XX/design_steps/step_NNNN/`, `gen_XX/offspring.json` |
-| | 2 | **second call** (after the skill) — fits the ERS on the pool (label: *E*<sub>hull</sub> ≤ `stability_epsilon`), ranks the offspring by plausibility of stability, selects `dft_budget_per_generation`, exports one folder per candidate for the DFT tool | `offspring.json` with `motif_groups` | `gen_XX/ers_ranking.csv`, `gen_XX/dft/<oid>/structure.cif`, `manifest.csv`, `gen_XX/offspring.csv` (provenance rows for `data.csv`) |
+| `generate` | 1 | draws parents (one of the `parent_pool_size` lowest *E*<sub>hull</sub>, one of the highest μ<sub>0</sub>*M*<sub>s</sub>, seeded random), the design agent crosses their profiles into one design, Motif Translate realizes it; repeated until `offspring_per_generation` are accepted; then prints the skill commands that assign the offspring motifs to the groups | database, `clusters.json` | `gen_XX/design_steps/step_NNNN/`, `gen_XX/offspring.json` |
+| `rank` | 2 | fits the ERS on the pool (label: *E*<sub>hull</sub> ≤ `stability_epsilon`), ranks the offspring by plausibility of stability, selects `dft_budget_per_generation`, exports one folder per candidate for the DFT tool. Separate from `generate` so that it can be re-run with other `loop.ers_*` settings before the DFT step, or replaced by your own selection rule | `offspring.json` with `motif_groups` | `gen_XX/ers_ranking.csv`, `gen_XX/dft/<oid>/structure.cif`, `manifest.csv`, `gen_XX/offspring.csv` (provenance rows for `data.csv`) |
 | *(you)* | — | run the DFT tool on `gen_XX/dft/*/structure.cif`; copy each relaxed `<oid>.cif` into the database folder and append the rows of `gen_XX/offspring.csv` with `energy_above_hull` and the property column to `data.csv` | | |
 | `update` | 3–4 | Structure-Translates the relaxed structures of the newest generation, prints the skill commands that assign their motifs, and reports whether the next generation can start (or that `n_generations` is reached) | relaxed CIFs, `data.csv` | `<oid>.txt`, `profile_file`, `set_names` (via the skill) |
 | `score [--grid-search-alpha]` | report | outside the loop, no model calls: refits the recommender on the whole database, writes the leave-one-out masses (`m_stable`, `m_unstable`, `m_unknown`) and `<run>/metrics.json` — stable, unique (same reduced formula and space group = duplicate), novel (`unseen`), SUN, magnetic (> 1 T), new prototype and joint counts for the seeds, each generation (selected vs unselected) and all candidates; `--grid-search-alpha` re-selects the ERS α by 10-fold cross-validation | `data.csv` | `metrics.json`, the three mass columns |
 | `template` | — | the empty database folder of a new study (1.2.2) | CIFs | `data.csv`, `README.txt` |
 | `structure-translate`, `motif-translate` | — | the two translators on files (section 2) | a CIF / a profile | `<out>/<id>/` |
 
-**The generation number is read from the database**, so no command needs it: `generate` produces (highest
-generation with properties) + 1 and refuses to start if that generation is already exported but its properties are
-not back in `data.csv`; `update` processes the highest generation present. `--gen N` overrides either.
+**The generation number is read from the database**, so no command needs it: `generate` and `rank` work on
+(highest generation with properties) + 1 — `generate` refuses to start if that generation is already exported but
+its properties are not back in `data.csv`, `rank` refuses while its offspring are not all proposed or not yet
+assigned to groups; `update` processes the highest generation present. `--gen N` overrides any of them.
 
 **How the ranking works.** Each pool structure is an observation (its set of motif groups, stable or not). For every
 offspring the ERS looks for pool structures whose group sets differ from the offspring's by the exchange of at most
@@ -279,7 +280,7 @@ python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run 
 #   [skill] assign the offspring motifs:  cluster_tools.py init --motifs runs/magnet/gen_01/offspring.json
 #           --state runs/magnet/gen_01/cluster_offspring --dictionary database/motif_groups/clusters.json
 #           -> passes / votes / tally / finalize -> apply --offspring runs/magnet/gen_01/offspring.json
-python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet   # ranks, exports -> gen_01/dft/<oid>/structure.cif
+python scripts/run_matevolve.py rank     --config configs/magnet_run.yaml --run runs/magnet   # ERS ranking, exports 100 -> gen_01/dft/<oid>/structure.cif
 #   ... DFT tool on gen_01/dft/*/structure.cif; copy the relaxed <oid>.cif into database/ and append the rows
 #       (ids, generation, parents, selected from gen_01/offspring.csv + energy_above_hull, mu0M_T_corrected) to database/data.csv ...
 python scripts/run_matevolve.py update   --config configs/magnet_run.yaml --run runs/magnet   # translates the relaxed structures
@@ -289,9 +290,10 @@ python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run 
 python scripts/run_matevolve.py score    --config configs/magnet_run.yaml --run runs/magnet   # report at any time
 ```
 
-Every `[skill]` line is printed by the preceding command with the exact paths, so the sequence can be followed from
-the console. With `--variant full` the same commands continue the reported run: `init` finds nothing to translate,
-`score` reproduces the benchmark counts of the four generations, and `generate` starts generation 5.
+One generation is therefore `generate` → [skill] → `rank` → [DFT] → `update` → [skill]. Every `[skill]` line is
+printed by the preceding command with the exact paths, so the sequence can be followed from the console. With
+`--variant full` the same commands continue the reported run: `init` finds nothing to translate, `score` reproduces
+the benchmark counts of the four generations, and `generate` starts generation 5.
 
 ### 3.3 Fresh scenario (new database and motif clustering)
 
@@ -310,7 +312,7 @@ python scripts/run_matevolve.py init     --config configs/my_study.yaml --run ru
 #   [skill] cluster_tools.py init --motifs projects/my_study --state runs/my_study/cluster_init --mode pilot
 #           -> seed prototypes, voting rounds until convergence (SKILL.md) -> finalize -> apply --database projects/my_study
 python scripts/run_matevolve.py generate --config configs/my_study.yaml --run runs/my_study
-#   ... [skill] offspring assignment / generate / DFT / update / [skill] assignment as in 3.2 ...
+#   ... [skill] offspring assignment / rank / DFT / update / [skill] assignment as in 3.2 ...
 ```
 
 The clustering is the expensive step (the reported run clustered ≈ 11 000 motifs of 948 seeds); the skill
@@ -364,8 +366,20 @@ how the model is reached.
 |---|---|---|
 | `matevolve-structure-translate` | CIF → motif profile, round-trip checked | `run_matevolve.py structure-translate` |
 | `matevolve-motif-translate` | motif profile / design → CIF, coverage checked | `run_matevolve.py motif-translate` |
-| `matevolve-loop` | `init` · `generate` · `update` · `score` around the external DFT tool | `run_matevolve.py init/generate/update/score` |
+| `matevolve-loop` | `init` · `generate` · `rank` · `update` · `score` around the external DFT tool | `run_matevolve.py init/generate/rank/update/score` |
 | `matevolve-cluster` | motif clustering (fresh database) and assignment to the frozen groups | — (skill in both versions) |
+
+Which commands involve the session's model replies, and which are plain Python in both versions:
+
+| Command | Model replies | In the skill version |
+|---|---|---|
+| `init` | Structure Translate of every structure without a profile (CIF2Text, standardizer, Text2CIF, coverage judge) | request / reply cycles, one chain per structure; then the `matevolve-cluster` skill if groups are missing |
+| `generate` | design agent + Motif Translate for every design step | request / reply cycles, one chain per design step; then the `matevolve-cluster` skill assigns the offspring motifs |
+| `rank` | **none** — Dempster–Shafer arithmetic on the group sets | a single tool call; output identical to the API version from the same `offspring.json` and `data.csv` |
+| `update` | Structure Translate of the relaxed structures | request / reply cycles, one chain per structure; then the `matevolve-cluster` skill assigns the new motifs |
+| `score`, `check`, `template`, `fetch_database.py` | **none** | single tool calls |
+| `structure-translate`, `motif-translate` | the translation loops | request / reply cycles, one chain per file |
+| motif clustering / assignment | the workers' votes | the `matevolve-cluster` skill itself (its tool tallies) |
 
 The request / reply exchange lives in the run folder:
 
@@ -403,7 +417,7 @@ request files by hand (or with another model), and re-run.
 | `matevolve/ers/` | Evidence-based recommender: Dempster–Shafer mass functions, substitutability belief, target belief, ranking, α grid search |
 | `matevolve/database.py` | The pool: `data.csv` + `<id>.cif` + `<id>.txt` motif profile per structure (column names configurable) |
 | `matevolve/dft_io.py` | Hand-off of candidates to the external DFT tool (one subfolder per structure) |
-| `matevolve/loop.py` | The generation loop as resumable steps: init → generate (propose · *skill* · rank + export) → *DFT* → update (translate · *skill*); `score` report |
+| `matevolve/loop.py` | The generation loop as resumable steps: init → generate (propose) · *skill* → rank (ERS + export) → *DFT* → update (translate · *skill*); `score` report |
 | `scripts/` | `run_matevolve.py` (loop, translators, template, score, check) and `fetch_database.py` |
 | `examples/` | `components_demo.py`: the agents on two structures (translate → crossover → translate back); `ers_demo.py`: the recommender on the database, no model calls |
 | `configs/` | `magnet_run.yaml`: all settings of the reported permanent-magnet run; `agent_run.yaml`: the same with `llm.provider: agent` (skill version) |

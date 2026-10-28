@@ -9,10 +9,11 @@ two commands with the DFT step in between:
     init                 step 0  mark the seeds (generation 0); Structure-Translate every structure without a profile
                                  -> the matevolve-cluster skill clusters the motifs into groups (fresh database) or
                                     assigns them to the frozen vocabulary (set_names)
-    generate             step 1  parents -> 200 offspring (crossover + Motif Translate)
-                                 -> the skill assigns the offspring motifs to the groups; run 'generate' again:
-                                 ERS ranking, 100 selected
-                         step 2  -> one subfolder per structure for the DFT tool   gen_XX/dft/<oid>/structure.cif
+    generate             step 1  parents -> 200 offspring (crossover + Motif Translate)   gen_XX/offspring.json
+                                 -> the skill assigns the offspring motifs to the groups (motif_groups)
+    rank                 step 2  ERS ranking of the offspring, 100 selected, exported one subfolder per structure
+                                 for the DFT tool   gen_XX/dft/<oid>/structure.cif  (re-run it to re-rank, e.g.
+                                 after changing loop.ers_* in the config; your own selection rule can replace it)
             -- run the DFT tool; copy the relaxed <oid>.cif into the database folder and append the property
                rows to data.csv (gen_XX/offspring.csv has the id / generation / parents / selected columns) --
     update               step 3  Structure Translate of the relaxed structures -> <oid>.txt, profile_file
@@ -23,9 +24,10 @@ Motif clustering and assignment are done by the matevolve-cluster skill (skills/
 run in a Claude session: worker sub-agents vote, its Python tool counts, and 'apply' writes the groups back.
 Each command above prints the exact skill commands when a hand-over is due.
 
-The generation number is read from the database: 'generate' produces (highest generation with
-properties) + 1 and refuses if that generation is already exported but not back in data.csv;
-'update' processes the highest generation present.  --gen N overrides either.
+The generation number is read from the database: 'generate' and 'rank' work on (highest generation with
+properties) + 1 -- 'generate' refuses if that generation is already exported but not back in data.csv, 'rank'
+refuses if its offspring are not all proposed or not yet assigned to groups; 'update' processes the highest
+generation present.  --gen N overrides any of them.
 
     score                optional report, outside the loop: leave-one-out ERS masses per row (m_stable /
                          m_unstable / m_unknown) and the stable / >1 T counts of the seeds, of every
@@ -51,6 +53,8 @@ Examples::
 
     python scripts/run_matevolve.py init     --config configs/magnet_run.yaml --run runs/magnet
     python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet
+    #   ... the matevolve-cluster skill assigns the offspring motifs (commands printed by 'generate') ...
+    python scripts/run_matevolve.py rank     --config configs/magnet_run.yaml --run runs/magnet
     #   ... DFT; copy the relaxed CIFs and append the rows to database/data.csv ...
     python scripts/run_matevolve.py update   --config configs/magnet_run.yaml --run runs/magnet
     python scripts/run_matevolve.py structure-translate --config configs/magnet_run.yaml --cif SmFe12.cif --out runs/translate
@@ -339,11 +343,11 @@ def translate_cli(args) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("step", choices=["check", "init", "generate", "update", "score", "template", "structure-translate", "motif-translate"])
+    ap.add_argument("step", choices=["check", "init", "generate", "rank", "update", "score", "template", "structure-translate", "motif-translate"])
     ap.add_argument("--config", required=True)
     ap.add_argument("--run", default="runs/matevolve", help="run directory (gen_XX/, translate/, logs/)")
     ap.add_argument("--database", help="path of data.csv (default: database.csv in the config)")
-    ap.add_argument("--gen", type=int, help="override the generation number detected from the database (generate / update)")
+    ap.add_argument("--gen", type=int, help="override the generation number detected from the database (generate / rank / update)")
     ap.add_argument("--grid-search-alpha", action="store_true", help="score: re-select the ERS alpha by cross-validation")
     ap.add_argument("--score", action="store_true", help="update: also write the ERS report")
     ap.add_argument("--cif", help="structure-translate: a CIF file or a folder of CIFs")
@@ -384,18 +388,28 @@ def main() -> None:
             raise SystemExit(f"{len(pending)} pool structures have a profile but no motif groups yet.\n"
                              + skill_step(me, "database motifs", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {me.db.dir}"))
         gdir = me.gen_dir(g)
-        if not (gdir / "offspring.json").is_file() or len(json.loads((gdir / "offspring.json").read_text())) < me.cfg.offspring_per_generation:
-            print(f"database: generations 0..{g - 1} present -> generating the offspring of generation {g}")
-            offspring = me.propose(g)
-            if report_pending(me._agent(), f"python scripts/run_matevolve.py generate --config {args.config} --run {args.run}"):
-                print(f"generation {g}: {len(offspring)}/{me.cfg.offspring_per_generation} offspring accepted so far")
-                return
+        print(f"database: generations 0..{g - 1} present -> generating the offspring of generation {g}")
+        offspring = me.propose(g)
+        if report_pending(me._agent(), f"python scripts/run_matevolve.py generate --config {args.config} --run {args.run}"):
+            print(f"generation {g}: {len(offspring)}/{me.cfg.offspring_per_generation} offspring accepted so far")
+            return
+        print(f"generation {g}: {len(offspring)} offspring -> {gdir / 'offspring.json'}")
         if me.unassigned_offspring(g):
-            print(f"generation {g}: {len(me.unassigned_offspring(g))} offspring proposed, motif groups not assigned yet.")
             print(skill_step(me, f"offspring of generation {g}", gdir / "offspring.json", gdir / "cluster_offspring",
                              f"--offspring {gdir / 'offspring.json'}"))
-            print("then run 'generate' again: it ranks the offspring and exports the selected ones for the DFT tool")
-            return
+        print(f"then: python scripts/run_matevolve.py rank --config {args.config} --run {args.run}")
+    elif args.step == "rank":
+        if g is None:
+            g, why = me.generation_to_rank()
+            if why:
+                raise SystemExit(why)
+        gdir = me.gen_dir(g)
+        if me.unassigned_offspring(g):
+            raise SystemExit(f"generation {g}: {len(me.unassigned_offspring(g))} offspring have no motif groups yet.\n"
+                             + skill_step(me, f"offspring of generation {g}", gdir / "offspring.json", gdir / "cluster_offspring",
+                                          f"--offspring {gdir / 'offspring.json'}"))
+        print(f"generation {g}: ranking {len(json.loads((gdir / 'offspring.json').read_text()))} offspring "
+              f"(ERS alpha {me.cfg.ers_alpha}, by {me.cfg.ers_rank_by})")
         for i, row in enumerate(me.rank(g)[:10], 1):
             print(i, *row)
         print("exported:", me.export(g), "-- run the DFT tool, add the relaxed structures to the database, then 'update'")

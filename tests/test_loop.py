@@ -113,9 +113,11 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
     # the generation number is read from the database: seeds only -> generate 1, nothing to update
     assert me.last_generation() == 0 and me.generation_to_generate() == (1, None)
     assert me.generation_to_update()[0] == 0 and "nothing to update" in me.generation_to_update()[1]
+    assert "run 'generate' first" in me.generation_to_rank()[1]          # nothing proposed yet: 'rank' refuses
 
     # step 1: generate; the offspring motifs are assigned by the skill before the ERS can rank them
     offspring = me.propose(1)
+    assert me.generation_to_rank() == (1, None)                           # all offspring proposed -> 'rank' targets generation 1
     assert len(offspring) == 3 and all(o["motif_groups"] == [] for o in offspring)
     assert sorted(me.unassigned_offspring(1)) == [o["oid"] for o in offspring]
     import pytest
@@ -137,6 +139,7 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
     # exported but not back in the database: 'generate' must not start generation 1 again
     g, why = me.generation_to_generate()
     assert g == 1 and "already been exported" in why and me.exported_generation() == 1
+    assert me.generation_to_rank() == (1, None)                           # re-ranking before DFT is allowed
 
     # ... the authors run DFT and update the database: relaxed CIFs + property rows ...
     for oid, p in prov.items():
@@ -147,6 +150,7 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
 
     # the rows are back: 'update' targets generation 1, 'generate' would start generation 2
     assert me.last_generation() == 1 and me.generation_to_update() == (1, None) and me.generation_to_generate() == (2, None)
+    assert me.generation_to_rank()[0] == 2 and "run 'generate' first" in me.generation_to_rank()[1]
 
     # step 3: translate the relaxed structures; then the skill assigns their motifs
     n_t = me.translate_generation(1)

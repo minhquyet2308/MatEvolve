@@ -23,7 +23,7 @@ def test_all_prompt_files_present():
     skills = skill.parent                        # the framework skills call the same CLI with the agent transport
     assert (skills / "README.md").is_file() and (skills / "references" / "worker_prompt.md").is_file()
     for name, cmd in (("matevolve-structure-translate", "structure-translate"), ("matevolve-motif-translate", "motif-translate"),
-                      ("matevolve-loop", "generate")):
+                      ("matevolve-loop", "rank")):
         text = (skills / name / "SKILL.md").read_text(encoding="utf-8")
         assert text.startswith("---\nname: " + name), name
         assert "run_matevolve.py" in text and cmd in text and "configs/agent_run.yaml" in text, name

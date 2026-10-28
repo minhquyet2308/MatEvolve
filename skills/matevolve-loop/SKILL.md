@@ -1,6 +1,6 @@
 ---
 name: matevolve-loop
-description: "Run the MatEvolve generation loop as a skill: init (seed database, translation of structures without profiles), generate (parents -> design agent -> Motif Translate -> 200 offspring; after the motif groups are assigned, ERS ranking by plausibility of stability and export of the top 100 for the external DFT tool), update (Structure Translate of the relaxed structures), score (benchmark report). Executes the framework's own Python (scripts/run_matevolve.py with configs/agent_run.yaml); the model replies are produced by worker sub-agents of this session; motif grouping is delegated to the matevolve-cluster skill; DFT is external. Use when the user wants to start or continue a MatEvolve design run, generate a new generation, update after DFT, or get the run's metrics."
+description: "Run the MatEvolve generation loop as a skill: init (seed database, translation of structures without profiles), generate (parents -> design agent -> Motif Translate -> 200 offspring), rank (after the motif groups are assigned: ERS ranking by plausibility of stability, export of the top 100 for the external DFT tool), update (Structure Translate of the relaxed structures), score (benchmark report). Executes the framework's own Python (scripts/run_matevolve.py with configs/agent_run.yaml); the model replies are produced by worker sub-agents of this session; motif grouping is delegated to the matevolve-cluster skill; DFT is external. Use when the user wants to start or continue a MatEvolve design run, generate a new generation, rank and export offspring, update after DFT, or get the run's metrics."
 ---
 
 # matevolve-loop — the generation loop
@@ -20,7 +20,7 @@ loop itself.
 |---|---|---|
 | `config` | path | `configs/agent_run.yaml` (or a copy for another study: database path, columns, vocabulary) |
 | `run` | path | run directory, e.g. `runs/magnet`; the same for every command of one run |
-| `command` | `init` \| `generate` \| `update` \| `score` \| `check` | what the user asks for; the generation number is read from the database |
+| `command` | `init` \| `generate` \| `rank` \| `update` \| `score` \| `check` | what the user asks for; the generation number is read from the database |
 | `parallel` | int | chains advanced per cycle (default `loop.parallel_chains` = 6) |
 
 ## Workflow
@@ -36,12 +36,15 @@ per structure. When it finishes it either says every structure has motif groups,
 `matevolve-cluster` commands (fresh database: full clustering; otherwise assignment to the frozen vocabulary).
 Run that skill, then continue.
 
-**generate** (steps 1–2) — first call: proposes the offspring (one chain per design step: design agent → Motif
-Translate; `design_steps/step_NNNN/` on disk, resumable), until `offspring_per_generation` are accepted, then
-prints the `matevolve-cluster` commands to assign the offspring motifs (`init --motifs <run>/gen_XX/offspring.json
---dictionary …`, one voting round, `apply --offspring`). Run that skill, then call `generate` again: the ERS
-ranks the offspring (plausibility of stability), selects `dft_budget_per_generation` and exports
-`gen_XX/dft/<oid>/structure.cif` + `manifest.csv` + `offspring.csv`. **Stop here**: the user runs the DFT tool.
+**generate** (step 1) — proposes the offspring (one chain per design step: design agent → Motif Translate;
+`design_steps/step_NNNN/` on disk, resumable) until `offspring_per_generation` are accepted, then prints the
+`matevolve-cluster` commands to assign the offspring motifs (`init --motifs <run>/gen_XX/offspring.json
+--dictionary …`, one voting round, `apply --offspring`). Run that skill, then `rank`.
+
+**rank** (step 2) — no model calls: the ERS ranks the offspring (plausibility of stability), selects
+`dft_budget_per_generation` and exports `gen_XX/dft/<oid>/structure.cif` + `manifest.csv` + `offspring.csv`. It
+refuses while offspring lack motif groups. It can be re-run before the DFT step (other `loop.ers_*` settings);
+the user may also replace it by their own selection. **Stop here**: the user runs the DFT tool.
 
 **update** (steps 3–4) — after the user has copied the relaxed `<oid>.cif` files into the database folder and
 appended the property rows to `data.csv`: Structure-Translates the relaxed structures (one chain each), then

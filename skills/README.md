@@ -42,13 +42,17 @@ The request `<id>` is a hash of the message sequence: the code asks the same que
 (seeded random choices, no clocks), so a re-run never re-asks what has been answered, and an identical
 request made twice is answered once.
 
+Only the steps that call the model go through the exchange. `rank`, `score`, `check`, `template` and
+`fetch_database.py` contain no model call, so in a skill they are single tool calls whose output is identical to
+the API version's (the recommender is deterministic Dempster–Shafer arithmetic on the motif-group sets).
+
 ## The skills
 
 | skill | command it runs | model steps a worker answers |
 |---|---|---|
 | [`matevolve-structure-translate`](matevolve-structure-translate/SKILL.md) | `run_matevolve.py structure-translate` — CIF → motif profile, round-trip checked | CIF2Text extraction, standardizer, Text2CIF, coverage judge |
 | [`matevolve-motif-translate`](matevolve-motif-translate/SKILL.md) | `run_matevolve.py motif-translate` — motif profile / design → CIF, coverage checked | Text2CIF (+ repairs), CIF2Text re-profile, coverage judge |
-| [`matevolve-loop`](matevolve-loop/SKILL.md) | `run_matevolve.py init / generate / update / score` — the generation loop around the external DFT tool | design agent, the two translations, (clustering and assignment are done by the next skill) |
+| [`matevolve-loop`](matevolve-loop/SKILL.md) | `run_matevolve.py init / generate / rank / update / score` — the generation loop around the external DFT tool | design agent and the two translations in `init` / `generate` / `update`; `rank` and `score` need none (clustering and assignment are done by the next skill) |
 | [`matevolve-cluster`](matevolve-cluster/SKILL.md) | its own tool `scripts/cluster_tools.py` — motif clustering and assignment to the frozen groups | prototype seeding / updates, assignment votes |
 
 All four need the repository installed (`environment.yml`, `pip install -e .`) and are run from the repository root.

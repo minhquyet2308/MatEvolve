@@ -43,7 +43,7 @@ occasions, each announced by the loop with the exact commands:
 | occasion | `init` | after `finalize` |
 |---|---|---|
 | **Fresh database** (`init` of the loop, no vocabulary yet): cluster all motifs, discover K | `init --motifs <database folder> --state <run>/cluster_init --mode pilot` → full loop (Phases A + B below) | `apply --state … --database <database folder>` → writes `set_names` for every structure and `<database>/motif_groups/clusters.json` |
-| **New offspring** (after `generate` proposed them): assign to the frozen vocabulary | `init --motifs <run>/gen_XX/offspring.json --state <run>/gen_XX/cluster_offspring --dictionary <database>/motif_groups/clusters.json` → **one E-step only** (passes → votes → verify → tally → finalize) | `apply --state … --offspring <run>/gen_XX/offspring.json` → fills `motif_groups`; then `generate` ranks and exports |
+| **New offspring** (after `generate` proposed them): assign to the frozen vocabulary | `init --motifs <run>/gen_XX/offspring.json --state <run>/gen_XX/cluster_offspring --dictionary <database>/motif_groups/clusters.json` → **one E-step only** (passes → votes → verify → tally → finalize) | `apply --state … --offspring <run>/gen_XX/offspring.json` → fills `motif_groups`; then `rank` ranks and exports |
 | **New relaxed structures** (after `update` translated them) | `init --motifs <database folder> --only-unassigned --state <run>/cluster_db_gXX --dictionary <database>/motif_groups/clusters.json` → one E-step only | `apply --state … --database <database folder>` → fills `set_names` of the new rows only; the vocabulary is kept |
 
 Motif ids in database mode are `<structure id>:<motif #>` (the `Motif #k` lines of `<id>.txt`, or the

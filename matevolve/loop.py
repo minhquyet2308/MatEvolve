@@ -24,9 +24,10 @@ relaxation is done by a separate tool.  One generation is therefore:
 
     step 0  init        database with seed CIFs + calculated properties; every structure without a
                         motif profile is Structure-Translated (motif groups: matevolve-cluster skill)
-    step 1  generate    parents -> offspring structures (motif editing + Motif Translate); the skill assigns
-                        their motifs to the groups; ERS ranking, top-100 selected
-    step 2  export      one subfolder per structure for the DFT tool            gen_XX/dft/<oid>/structure.cif
+    step 1  generate    parents -> offspring structures (motif editing + Motif Translate)
+            -- the matevolve-cluster skill assigns the offspring motifs to the frozen groups --
+    step 2  rank        ERS ranking of the offspring, top-100 selected, exported one subfolder per structure
+                        for the DFT tool                                         gen_XX/dft/<oid>/structure.cif
             -- external DFT; the authors add the relaxed CIFs and the property rows to the database --
     step 3  translate   Structure Translate of every new relaxed structure; profile paths -> CSV
             -- the matevolve-cluster skill assigns the new motifs to the frozen groups (set_names) --
@@ -484,6 +485,16 @@ class MatEvolve:
                        f"rows are not in the database yet -- run the DFT tool, add the rows, then 'update'")
         if g > self.cfg.n_generations:
             return g, f"the run has reached its {self.cfg.n_generations} generations"
+        return g, None
+
+    def generation_to_rank(self) -> Tuple[int, Optional[str]]:
+        """The generation ``rank`` should rank and export: the one whose offspring are proposed but not back in the
+        database.  Re-ranking an exported generation is allowed (the DFT hand-off is rewritten)."""
+        g = self.last_generation() + 1
+        p = self.gen_dir(g) / "offspring.json"
+        n = len(json.loads(p.read_text())) if p.is_file() else 0
+        if n < self.cfg.offspring_per_generation:
+            return g, (f"generation {g}: {n}/{self.cfg.offspring_per_generation} offspring in {p} -- run 'generate' first")
         return g, None
 
     def generation_to_update(self) -> Tuple[int, Optional[str]]:

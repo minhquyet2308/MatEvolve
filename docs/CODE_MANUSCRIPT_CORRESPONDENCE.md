@@ -81,7 +81,7 @@ run — and not by the Python package. Worker sub-agents vote in a Claude sessio
 | Stop when mean consensus ≥ 0.8 and ARI ≥ 0.95 for two rounds, or after 8 rounds | `converge` (`s_min = 0.8`, `eps = 0.05` ⇔ ARI ≥ 0.95, two consecutive rounds, `max_rounds = 8`) | R |
 | ≈ a dozen initial prototypes proposed from the motif set | `seed_k0 = 12`, `references/seed_prompt.md` | R |
 | Only votes and prototype text come from the model; all counting deterministic | `cluster_tools.py` is pure stdlib Python; workers return categorical votes (canaries + `verify` guard against scripted answers) | R |
-| Groups fixed after clustering; candidate motifs assigned to them before ERS scoring | `init --dictionary <clusters.json>` (frozen prototypes, one E-step) → `apply --offspring` / `apply --database`; `loop.py::MatEvolve.rank` refuses unassigned offspring, `generate` refuses an unassigned pool | T (`test_loop`) |
+| Groups fixed after clustering; candidate motifs assigned to them before ERS scoring | `init --dictionary <clusters.json>` (frozen prototypes, one E-step) → `apply --offspring` / `apply --database`; `loop.py::MatEvolve.rank` (CLI `rank`) refuses unassigned offspring, `generate` refuses an unassigned pool | T (`test_loop`) |
 | Worker prompts (assign, seed/discovery, update, merge, split, resolution rule) | `skills/matevolve-cluster/references/*.md` | R |
 | Resolution rule: unit class + dimensionality + coordination archetype + CN band | `references/resolution_rule.md` | R |
 

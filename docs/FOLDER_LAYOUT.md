@@ -62,7 +62,7 @@ runs/<name>/
 ├── metrics.json                       optional `score` report — benchmark counts (stable, unique, novel, SUN, magnetic, new prototype,
 │                                      joint) for seeds, each generation (selected vs unselected) and all candidates; ERS evidence
 └── gen_XX/
-    ├── offspring.json                 step 1 — accepted offspring: oid, cif (pre-relaxed, primitive), cif_raw, parents,
+    ├── offspring.json                 step 1 (`generate`) — accepted offspring: oid, cif (pre-relaxed, primitive), cif_raw, parents,
     │                                  composition, motif_groups (filled by the skill's `apply --offspring`), profile_path (T′_off), design_step
     ├── cluster_offspring/             state folder of the skill's assignment of the offspring motifs
     ├── design_steps/step_NNNN/        every design step, accepted or rejected
@@ -70,10 +70,10 @@ runs/<name>/
     │   ├── final.cif, final_raw_llm.cif, reprofile.json   (accepted only)
     │   ├── attempts.json              Text2CIF validity issues and coverage report per attempt
     │   └── summary.json
-    ├── ers_ranking.csv                step 1 — rank, oid, m_stable, m_unstable, m_unknown, selected
-    ├── offspring.csv                  step 2 — provenance rows to merge into data.csv: id, formula, generation,
+    ├── ers_ranking.csv                step 2 (`rank`) — rank, oid, m_stable, m_unstable, m_unknown, selected
+    ├── offspring.csv                  step 2 (`rank`) — provenance rows to merge into data.csv: id, formula, generation,
     │                                  parents, selected, set_names (design-time groups; `translate` regroups)
-    ├── dft/                           step 2 — hand-off to the external DFT tool
+    ├── dft/                           step 2 (`rank`) — hand-off to the external DFT tool
     │   ├── manifest.csv               oid, folder, composition, selected
     │   └── <oid>/
     │       ├── structure.cif          input to the DFT tool
