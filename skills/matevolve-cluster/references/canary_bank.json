@@ -1,0 +1,16 @@
+[
+ {"archetypes":["tetrahedral"],"text":"Iron atoms group into discrete four-cornered tetrahedral clusters that stand alone as a zero-dimensional unit, each metal centre having only a few near neighbours (a low coordination count)."},
+ {"archetypes":["dumbbell","dimer"],"text":"Cobalt atoms pair up into upright two-atom dumbbells running along the vertical axis; these are isolated little struts with very few neighbours per atom."},
+ {"archetypes":["frank-kasper","cage","close-packed","backbone"],"text":"Iron builds a dense, fully three-dimensional, topologically close-packed Frank-Kasper network of interpenetrating polyhedra with a large number of neighbours around every site, caging the rare-earth guests."},
+ {"archetypes":["icosahedral","cage"],"text":"Each rare-earth atom sits at the centre of a twenty-vertex icosahedral shell of iron neighbours, a high-neighbour-count cage repeating through three dimensions."},
+ {"archetypes":["octahedral"],"text":"Manganese and oxygen knit together into a three-dimensional framework of six-coordinate octahedra that share their corners throughout the structure."},
+ {"archetypes":["prismatic"],"text":"Six-coordinate trigonal-prismatic pockets sit between the metal sheets, tying the layers into a three-dimensional framework."},
+ {"archetypes":["chain"],"text":"Iron threads into one-dimensional zigzag chains; each atom bonds to just a couple of chain neighbours and the chains do not cross-link."},
+ {"archetypes":["ring"],"text":"Cobalt atoms close into puckered rings that connect through the three-dimensional structure, with a moderate-to-large number of neighbours per atom."},
+ {"archetypes":["kagome","honeycomb"],"text":"Iron forms a flat kagome pattern of corner-sharing triangles within a single quasi-two-dimensional sheet, a moderate number of in-plane neighbours."},
+ {"archetypes":["square-net","square net","square"],"text":"A flat square grid of iron atoms lies within a quasi-two-dimensional layer, each atom with a middling count of in-plane neighbours."},
+ {"archetypes":["backbone","diffuse"],"text":"The metal atoms form a diffuse, percolating three-dimensional backbone with no single recognisable polyhedron, a generic close-knit network at moderate coordination."},
+ {"archetypes":["pyramidal","prismatic"],"text":"Three-coordinate trigonal-pyramidal units assemble into an open framework where every centre has only a small number of neighbours."},
+ {"archetypes":["triangular","trigonal"],"text":"Iron sits in compact triangular, three-fold environments that repeat to build a stiff three-dimensional framework at a moderate neighbour count."},
+ {"archetypes":["chain"],"text":"Manganese and oxygen link head-to-tail into straight one-dimensional rows extending along a single axis, each centre bonded to few neighbours."}
+]

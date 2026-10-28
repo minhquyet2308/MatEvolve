@@ -23,11 +23,13 @@ CIF and one motif-profile file per structure -- and first-principles
 relaxation is done by a separate tool.  One generation is therefore:
 
     step 0  init        database with seed CIFs + calculated properties; every structure without a
-                        motif profile is Structure-Translated and its motif groups are assigned
-    step 1  generate    parents -> offspring structures (motif editing + Motif Translate); ERS ranking, top-100 selected
+                        motif profile is Structure-Translated (motif groups: matevolve-cluster skill)
+    step 1  generate    parents -> offspring structures (motif editing + Motif Translate); the skill assigns
+                        their motifs to the groups; ERS ranking, top-100 selected
     step 2  export      one subfolder per structure for the DFT tool            gen_XX/dft/<oid>/structure.cif
             -- external DFT; the authors add the relaxed CIFs and the property rows to the database --
-    step 3  translate   Structure Translate of every new relaxed structure; motif groups; profile paths -> CSV
+    step 3  translate   Structure Translate of every new relaxed structure; profile paths -> CSV
+            -- the matevolve-cluster skill assigns the new motifs to the frozen groups (set_names) --
     step 4  next        can generation g+1 start?
     (report) score      optional, outside the loop: leave-one-out ERS masses per row and the stable / >1 T
                         counts of the seeds, of every generation and of all candidates (metrics.json);
@@ -48,11 +50,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .agents import CROSSOVER, EvoOperator
-from .clustering import MotifCluster
-from .clustering.consensus import NONE
 from .database import Database
 from .dft_io import write_dft_subfolders
 from .ers import ERS
+from .llm import AgentClient, NeedReply
 from .profile import MotifProfile, parse_profile_txt, profile_to_txt
 from .translate import Translator
 
@@ -67,8 +68,11 @@ class LoopConfig:
     parent_pool_size: int = 200
     operator: str = CROSSOVER
     stability_epsilon: float = 0.1
-    ers_alpha: float = 0.1
+    ers_alpha: float = 0.01                   # mass per observation
+    ers_max_combination_size: Optional[int] = 2   # |C_t|, |C_v| <= 2 groups (None = no cap)
+    ers_rank_by: str = "plausibility"         # 'plausibility' (1 - m_unstable) or 'belief' (m_stable)
     max_design_steps_factor: float = 3.0      # give up a generation after factor x offspring design steps
+    parallel_chains: int = 6                  # agent transport: independent chains advanced per run (pending model replies)
     export_unselected: bool = True            # also hand the unselected proposals to DFT (diagnostics, outside the loop)
     group_prefix: str = "G_"                  # motif-group label written to the CSV: G_<cluster id>
     seed: int = 0
@@ -76,30 +80,39 @@ class LoopConfig:
 
 class MatEvolve:
     def __init__(self, run_dir: Path, database: Database, translator: Translator, operator: EvoOperator,
-                 grouper: MotifCluster, config: Optional[LoopConfig] = None) -> None:
+                 config: Optional[LoopConfig] = None) -> None:
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.db = database
         self.translator = translator
         self.operator = operator
-        self.grouper = grouper
         self.cfg = config or LoopConfig()
         self.rng = random.Random(self.cfg.seed)
+        self.pending: List[NeedReply] = []    # agent transport: chains waiting for a model reply (this run)
+
+    # ------------------------------------------------------------------
+    # agent transport: independent chains (one structure / one design step)
+    # ------------------------------------------------------------------
+    def _agent(self) -> Optional[AgentClient]:
+        llm = getattr(self.translator.cif2text, "llm", None)
+        return llm if isinstance(llm, AgentClient) else None
+
+    def _chain(self, label: str) -> None:
+        a = self._agent()
+        if a is not None:
+            a.chain = label
+
+    def _wait(self, exc: NeedReply, label: str) -> bool:
+        """Record a chain that stopped for a model reply; True while more chains may be started."""
+        self.pending.append(exc)
+        log.info("chain %s waits for a model reply (%s)", label, exc.request_path.name)
+        return len(self.pending) < self.cfg.parallel_chains
 
     # ------------------------------------------------------------------
     def gen_dir(self, g: int) -> Path:
         d = self.run_dir / f"gen_{g:02d}"
         d.mkdir(parents=True, exist_ok=True)
         return d
-
-    def _group_label(self, cluster_id) -> str:
-        return f"{self.cfg.group_prefix}{cluster_id}"
-
-    def _groups_of(self, profile: MotifProfile) -> List[str]:
-        motifs = {f"{profile.source}:{m.motif_id}": m.text for m in profile.motifs}
-        assign = self.grouper.assign_frozen(motifs)
-        ids = sorted({int(g) for g in assign.values() if g != NONE})
-        return [self._group_label(i) for i in ids]
 
     def _translate_into_db(self, sid: str) -> Optional[MotifProfile]:
         """Structure Translate of database row ``sid``; writes <id>.txt / <id>.profile.json and the CSV column."""
@@ -132,13 +145,15 @@ class MatEvolve:
     # ------------------------------------------------------------------
     # step 0 / step 3: translate what is missing
     # ------------------------------------------------------------------
-    def translate(self, ids: Optional[Sequence[str]] = None, assign_groups: bool = True) -> Tuple[int, int]:
-        """Structure-Translate every database row without a profile; assign motif groups where missing.
+    def translate(self, ids: Optional[Sequence[str]] = None) -> int:
+        """Structure-Translate every database row without a profile.
 
         Used as step 0 on the seeds and as step 3 on the relaxed structures the
-        DFT tool returned.  Rows that already have a profile file (e.g. the
-        authors' existing ``<id>.txt``) are left alone; their groups are
-        assigned only if the ``set_names`` column is empty.
+        DFT tool returned.  Rows that already have a profile file (e.g. an
+        existing ``<id>.txt``) are left alone.  Motif groups (``set_names``) are
+        NOT assigned here: that is the job of the matevolve-cluster skill
+        (``skills/matevolve-cluster``), which votes every new motif into the frozen
+        vocabulary and writes the column back (``cluster_tools.py apply``).
         """
         todo = list(ids) if ids is not None else self.db.needs_profile()
         todo = [s for s in todo if not self.db.get(s).get("translate_rejected")]
@@ -147,22 +162,19 @@ class MatEvolve:
             if not self.db.cif_path(sid).is_file():
                 log.warning("%s: CIF not found at %s", sid, self.db.cif_path(sid))
                 continue
-            if self._translate_into_db(sid) is not None:
-                n_t += 1
-        n_g = 0
-        if assign_groups:
-            for sid in self.db.needs_groups():
-                prof = self.load_profile(sid)
-                if prof is None or not prof.motifs:
-                    continue
-                self.db.add(sid, **{self.db.col.groups: "|".join(self._groups_of(prof))})
-                n_g += 1
-            self.db.save()
-        log.info("translate: %d structures translated, %d assigned to motif groups; database %d rows", n_t, n_g, len(self.db))
-        return n_t, n_g
+            self._chain(sid)
+            try:
+                if self._translate_into_db(sid) is not None:
+                    n_t += 1
+            except NeedReply as exc:                       # agent transport: this structure waits, try the next
+                if not self._wait(exc, sid):
+                    break
+        log.info("translate: %d structures translated; database %d rows, %d still without motif groups",
+                 n_t, len(self.db), len(self.db.needs_groups()))
+        return n_t
 
     def init(self) -> Database:
-        """Step 0: mark seeds as generation 0, then translate + group everything that lacks it."""
+        """Step 0: mark seeds as generation 0, then translate everything that lacks a profile."""
         for r in self.db.rows:
             if not r.get(self.db.col.generation):
                 r[self.db.col.generation] = "0"
@@ -170,66 +182,116 @@ class MatEvolve:
         self.translate()
         return self.db
 
-    def database_motifs(self) -> Dict[str, str]:
-        """All motif texts of the database (input to the clustering)."""
-        out: Dict[str, str] = {}
-        for r in self.db.rows:
-            prof = self.load_profile(r[self.db.col.id])
-            if prof:
-                for m in prof.motifs:
-                    out[f"{prof.source}:{m.motif_id}"] = m.text
-        return out
+    def needs_assignment(self) -> List[str]:
+        """Pool structures that have a profile but no motif groups yet (to be assigned by the skill)."""
+        return [sid for sid in self.db.needs_groups() if self.db.in_pool(self.db.get(sid))]
 
     # ------------------------------------------------------------------
     # step 1a: generate offspring (motif editing + Motif Translate)
     # ------------------------------------------------------------------
-    def propose(self, g: int) -> List[Dict]:
+    def _step_dir(self, g: int, n: int) -> Path:
+        return self.gen_dir(g) / "design_steps" / f"step_{n:04d}"
+
+    def _offspring_from_steps(self, g: int) -> List[Dict]:
+        """offspring.json rebuilt from the accepted design steps, in step order (ids G<g>-<k>).
+
+        ``motif_groups`` already assigned (by the skill's ``apply --offspring``) are kept.
+        """
         gdir = self.gen_dir(g)
         out_path = gdir / "offspring.json"
-        offspring: List[Dict] = json.loads(out_path.read_text()) if out_path.is_file() else []
+        old = {o["design_step"]: o for o in json.loads(out_path.read_text())} if out_path.is_file() else {}
+        offspring: List[Dict] = []
+        for odir in sorted((gdir / "design_steps").glob("step_*")) if (gdir / "design_steps").is_dir() else []:
+            summary = odir / "summary.json"
+            if not summary.is_file() or not json.loads(summary.read_text()).get("accepted"):
+                continue
+            n = int(odir.name.split("_")[1])
+            design = json.loads((odir / "design.json").read_text())
+            offspring.append({"oid": f"G{g:02d}-{len(offspring) + 1:03d}", "cif": (odir / "final.cif").read_text(),
+                              "cif_raw": (odir / "final_raw_llm.cif").read_text() if (odir / "final_raw_llm.cif").is_file() else None,
+                              "parents": design.get("parents", []), "composition": design["composition"],
+                              "motif_groups": old.get(n, {}).get("motif_groups", []),   # filled by the skill (apply --offspring)
+                              "profile_path": str(odir / "reprofile.json"), "design_step": n})
+        out_path.write_text(json.dumps(offspring, indent=1))
+        return offspring
+
+    def propose(self, g: int) -> List[Dict]:
+        """Design steps until ``offspring_per_generation`` offspring are accepted.
+
+        Each step draws two parents (deterministically from the seeded RNG), asks the
+        design agent for an offspring profile and realizes it with Motif Translate.
+        Every step is persisted under ``gen_XX/design_steps/step_NNNN/`` and skipped on
+        a re-run, so the generation resumes after an interruption; with the agent
+        transport up to ``parallel_chains`` steps wait for a model reply at a time.
+        """
+        gdir = self.gen_dir(g)
         stable_pool = self.db.stability_pool(self.cfg.parent_pool_size)
         mag_pool = self.db.magnetization_pool(self.cfg.parent_pool_size)
         if not stable_pool or not mag_pool:
             raise RuntimeError("the database has no validated structures to select parents from")
-        n_steps = 0
+        rng = random.Random(self.cfg.seed + 1000 * g)        # the same parent sequence on every re-run of generation g
         max_steps = int(self.cfg.max_design_steps_factor * self.cfg.offspring_per_generation)
-        while len(offspring) < self.cfg.offspring_per_generation and n_steps < max_steps:
-            n_steps += 1
-            p_stab, p_mag = self.rng.choice(stable_pool), self.rng.choice(mag_pool)
+        accepted = 0
+        for n in range(1, max_steps + 1):
+            p_stab, p_mag = rng.choice(stable_pool), rng.choice(mag_pool)
+            if accepted >= self.cfg.offspring_per_generation:
+                break
             if p_stab == p_mag:
+                continue
+            odir = self._step_dir(g, n)
+            summary = odir / "summary.json"
+            if summary.is_file():                             # finished in an earlier run
+                accepted += bool(json.loads(summary.read_text()).get("accepted"))
                 continue
             profiles = [self.load_profile(p_stab), self.load_profile(p_mag)]
             if any(p is None or not p.motifs for p in profiles):
                 continue
-            designs = self.operator.propose(profiles, operator=self.cfg.operator, max_designs=1)
-            if not designs:
+            self._chain(f"G{g:02d}-step{n:04d}")
+            try:
+                designs = self.operator.propose(profiles, operator=self.cfg.operator, max_designs=1)
+                if not designs:
+                    odir.mkdir(parents=True, exist_ok=True)
+                    summary.write_text(json.dumps({"accepted": False, "n_attempts": 0, "reason": "no design"}))
+                    continue
+                design = designs[0]
+                design.parents = [p_stab, p_mag]
+                odir.mkdir(parents=True, exist_ok=True)
+                (odir / "design.json").write_text(json.dumps(design.to_dict(), indent=2))
+                res = self.translator.motif_translate(design)
+            except NeedReply as exc:                          # agent transport: this step waits for a reply
+                if not self._wait(exc, f"step {n}"):
+                    break
                 continue
-            design = designs[0]
-            design.parents = [p_stab, p_mag]
-            res = self.translator.motif_translate(design)
-            odir = gdir / "design_steps" / f"step_{n_steps:04d}"
             res.save(odir)
-            (odir / "design.json").write_text(json.dumps(design.to_dict(), indent=2))
-            if not res.accepted:
-                log.info("design step %d: offspring rejected by MotifTranslate", n_steps)
-                continue
-            oid = f"G{g:02d}-{len(offspring) + 1:03d}"
-            groups = self._groups_of(res.profile)
-            offspring.append({"oid": oid, "cif": res.structure.to(fmt="cif"), "cif_raw": res.cif_raw, "parents": design.parents,
-                              "composition": design.composition, "motif_groups": groups,
-                              "profile_path": str(odir / "reprofile.json"), "design_step": n_steps})
-            out_path.write_text(json.dumps(offspring, indent=1))
-            log.info("generation %d: %d/%d offspring", g, len(offspring), self.cfg.offspring_per_generation)
-        return offspring
+            if res.accepted:
+                accepted += 1
+            else:
+                log.info("design step %d: offspring rejected by MotifTranslate", n)
+            log.info("generation %d: %d/%d offspring", g, accepted, self.cfg.offspring_per_generation)
+        return self._offspring_from_steps(g)
 
     # ------------------------------------------------------------------
+    def _ers(self, alpha: Optional[float] = None) -> ERS:
+        return ERS(alpha=self.cfg.ers_alpha if alpha is None else alpha, max_combination_size=self.cfg.ers_max_combination_size)
+
     # step 1b: recommendation (ERS)
     # ------------------------------------------------------------------
+    def unassigned_offspring(self, g: int) -> List[str]:
+        """Offspring of generation g whose motifs have not been assigned to groups yet."""
+        p = self.gen_dir(g) / "offspring.json"
+        if not p.is_file():
+            return []
+        return [o["oid"] for o in json.loads(p.read_text()) if not o.get("motif_groups")]
+
     def rank(self, g: int) -> List[Tuple[str, float, float, float]]:
         gdir = self.gen_dir(g)
         offspring = json.loads((gdir / "offspring.json").read_text())
-        ers = ERS(alpha=self.cfg.ers_alpha).fit(self.db.observations(self.cfg.stability_epsilon))
-        ranking = ers.rank({o["oid"]: o["motif_groups"] for o in offspring})
+        missing = [o["oid"] for o in offspring if not o.get("motif_groups")]
+        if missing:
+            raise RuntimeError(f"generation {g}: {len(missing)} offspring have no motif groups yet -- assign them with the "
+                               f"matevolve-cluster skill (init --motifs {gdir / 'offspring.json'} --dictionary ... ; apply --offspring)")
+        ers = self._ers().fit(self.db.observations(self.cfg.stability_epsilon))
+        ranking = ers.rank({o["oid"]: o["motif_groups"] for o in offspring}, by=self.cfg.ers_rank_by)
         with (gdir / "ers_ranking.csv").open("w", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(["rank", "oid", "m_stable", "m_unstable", "m_unknown", "selected"])
@@ -267,7 +329,7 @@ class MatEvolve:
     # ------------------------------------------------------------------
     # step 3: translate the relaxed structures the DFT tool returned
     # ------------------------------------------------------------------
-    def translate_generation(self, g: int) -> Tuple[int, int]:
+    def translate_generation(self, g: int) -> int:
         """Structure Translate of the generation's rows now in the database (relaxed cells).
 
         The design-time profile (T'_off of the unrelaxed candidate) is not
@@ -278,11 +340,11 @@ class MatEvolve:
         missing = [s for s in ids if self.db.profile_path(s) is None or not self.db.profile_path(s).is_file()]
         for sid in missing:
             self.db.add(sid, **{self.db.col.groups: ""})     # regroup from the relaxed-cell profile
-        n_t, n_g = self.translate(missing)
+        n_t = self.translate(missing)
         pending = [oid for oid in self.selected(g) if oid not in self.db]
         if pending:
             log.info("generation %d: %d selected candidates not yet in the database", g, len(pending))
-        return n_t, n_g
+        return n_t
 
     # ------------------------------------------------------------------
     # report (optional): ERS scores and metrics
@@ -317,8 +379,8 @@ class MatEvolve:
         obs = self.db.observations(self.cfg.stability_epsilon)
         alpha, grid = self.cfg.ers_alpha, None
         if grid_search_alpha and obs:
-            alpha, grid = ERS.grid_search_alpha(obs)
-        ers = ERS(alpha=alpha).fit(obs)
+            alpha, grid = ERS.grid_search_alpha(obs, max_combination_size=self.cfg.ers_max_combination_size)
+        ers = self._ers(alpha).fit(obs)
         c = self.db.col
         for r in self.db.rows:
             sid = r[c.id]
@@ -399,6 +461,39 @@ class MatEvolve:
         return out
 
     # ------------------------------------------------------------------
+    # where does the run stand?  (read from the database, not from memory)
+    # ------------------------------------------------------------------
+    def last_generation(self) -> int:
+        """Highest ``generation`` among database rows with properties (0 = seeds only)."""
+        c = self.db.col
+        gens = [int(float(r.get(c.generation) or 0)) for r in self.db.rows if self.db.e_hull(r[c.id]) is not None]
+        return max(gens, default=0)
+
+    def exported_generation(self) -> Optional[int]:
+        """A generation already handed to the DFT tool whose rows are not back in the database yet."""
+        g = self.last_generation() + 1
+        if (self.run_dir / f"gen_{g:02d}" / "dft" / "manifest.csv").is_file():
+            return g
+        return None
+
+    def generation_to_generate(self) -> Tuple[int, Optional[str]]:
+        """The generation ``generate`` should produce, or a reason why none can be produced now."""
+        g = self.last_generation() + 1
+        if self.exported_generation() == g:
+            return g, (f"generation {g} has already been exported to {self.run_dir / f'gen_{g:02d}' / 'dft'} and its "
+                       f"rows are not in the database yet -- run the DFT tool, add the rows, then 'update'")
+        if g > self.cfg.n_generations:
+            return g, f"the run has reached its {self.cfg.n_generations} generations"
+        return g, None
+
+    def generation_to_update(self) -> Tuple[int, Optional[str]]:
+        """The generation ``update`` should process (the newest one in the database), or why there is none."""
+        g = self.last_generation()
+        if g == 0:
+            return g, "the database holds only seeds: nothing to update -- run 'generate' first"
+        return g, None
+
+    # ------------------------------------------------------------------
     # step 4: next loop?
     # ------------------------------------------------------------------
     def next_generation(self, g: int) -> Tuple[bool, str]:
@@ -410,7 +505,8 @@ class MatEvolve:
             return False, f"generation {g}: {len(missing)}/{len(sel)} selected candidates have no properties in the database yet"
         no_groups = [oid for oid in sel if not self.db.groups(oid)]
         if no_groups:
-            return False, f"generation {g}: {len(no_groups)} selected candidates without motif profile/groups -- run 'translate'"
+            return False, (f"generation {g}: {len(no_groups)} selected candidates without motif groups -- run 'update' (profiles) and "
+                           f"then the matevolve-cluster skill (assignment to the frozen vocabulary)")
         if g >= self.cfg.n_generations:
             return False, f"generation {g} complete: the run has reached its {self.cfg.n_generations} generations"
         return True, f"generation {g} complete; generation {g + 1} can start"

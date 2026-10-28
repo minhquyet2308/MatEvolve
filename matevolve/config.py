@@ -9,7 +9,7 @@ import yaml
 
 from .agents import CIF2Text, CoverageJudge, EvoOperator, Text2CIF
 from .geometry import DEFAULT_M3GNET, M3GNetRelaxer
-from .llm import LLMClient, LLMConfig, RecordingClient
+from .llm import AgentClient, LLMClient, LLMConfig, RecordingClient
 from .translate import Translator
 
 
@@ -19,7 +19,14 @@ def load_yaml(path: Path) -> Dict[str, Any]:
 
 
 def build_llm(cfg: Dict[str, Any], log_path: Optional[Path] = None, step: str = "") -> LLMClient:
-    llm = LLMConfig(**{k: v for k, v in (cfg.get("llm") or {}).items() if k in LLMConfig.__dataclass_fields__}).build()
+    """The client of the config; ``provider: agent`` exchanges replies with the skill session next to the log."""
+    lcfg = {k: v for k, v in (cfg.get("llm") or {}).items() if k in LLMConfig.__dataclass_fields__}
+    if lcfg.get("provider") == "agent" and log_path is not None and "exchange" not in (cfg.get("llm") or {}):
+        lcfg["exchange"] = str(Path(log_path).parent / "llm")
+    llm = LLMConfig(**lcfg).build()
+    if isinstance(llm, AgentClient):
+        llm.step = step
+        return llm                                    # logs its own conversations.jsonl in the exchange folder
     if log_path is not None:
         llm = RecordingClient(llm, log_path, step=step)
     return llm

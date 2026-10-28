@@ -6,15 +6,26 @@ motif profile) per structure; its path is ``database.csv`` in the config.
 First-principles relaxation is done by a separate tool, so one generation is
 two commands with the DFT step in between:
 
-    init                 step 0  mark the seeds (generation 0); Structure-Translate every structure without a
-                                 profile; assign motif groups  (--cluster: build the group vocabulary first;
-                                 an interrupted clustering resumes from <run>/clustering/checkpoint.json)
-    generate --gen g     step 1  parents -> 200 offspring (crossover + Motif Translate) -> ERS ranking, 100 selected
+    init                 step 0  mark the seeds (generation 0); Structure-Translate every structure without a profile
+                                 -> the matevolve-cluster skill clusters the motifs into groups (fresh database) or
+                                    assigns them to the frozen vocabulary (set_names)
+    generate             step 1  parents -> 200 offspring (crossover + Motif Translate)
+                                 -> the skill assigns the offspring motifs to the groups; run 'generate' again:
+                                 ERS ranking, 100 selected
                          step 2  -> one subfolder per structure for the DFT tool   gen_XX/dft/<oid>/structure.cif
             -- run the DFT tool; copy the relaxed <oid>.cif into the database folder and append the property
                rows to data.csv (gen_XX/offspring.csv has the id / generation / parents / selected columns) --
-    update   --gen g     step 3  Structure Translate of the relaxed structures -> <oid>.txt, set_names, profile_file
-                         step 4  can generation g+1 start?
+    update               step 3  Structure Translate of the relaxed structures -> <oid>.txt, profile_file
+                                 -> the skill assigns the new motifs to the groups (set_names)
+                         step 4  can the next generation start?
+
+Motif clustering and assignment are done by the matevolve-cluster skill (skills/matevolve-cluster/SKILL.md),
+run in a Claude session: worker sub-agents vote, its Python tool counts, and 'apply' writes the groups back.
+Each command above prints the exact skill commands when a hand-over is due.
+
+The generation number is read from the database: 'generate' produces (highest generation with
+properties) + 1 and refuses if that generation is already exported but not back in data.csv;
+'update' processes the highest generation present.  --gen N overrides either.
 
     score                optional report, outside the loop: leave-one-out ERS masses per row (m_stable /
                          m_unstable / m_unknown) and the stable / >1 T counts of the seeds, of every
@@ -38,10 +49,10 @@ The translators on their own (no database needed):
 
 Examples::
 
-    python scripts/run_matevolve.py init     --config configs/magnet_run.yaml --run runs/magnet --cluster
-    python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet --gen 1
+    python scripts/run_matevolve.py init     --config configs/magnet_run.yaml --run runs/magnet
+    python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet
     #   ... DFT; copy the relaxed CIFs and append the rows to database/data.csv ...
-    python scripts/run_matevolve.py update   --config configs/magnet_run.yaml --run runs/magnet --gen 1
+    python scripts/run_matevolve.py update   --config configs/magnet_run.yaml --run runs/magnet
     python scripts/run_matevolve.py structure-translate --config configs/magnet_run.yaml --cif SmFe12.cif --out runs/translate
     python scripts/run_matevolve.py motif-translate     --config configs/magnet_run.yaml --profile SmFe12.txt --out runs/translate
 """
@@ -57,15 +68,21 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from matevolve.clustering import ClusterConfig, MotifCluster  # noqa: E402
 from matevolve.config import build_llm, build_operator, build_translator, load_yaml  # noqa: E402
 from matevolve.database import Columns, Database  # noqa: E402
+from matevolve.llm import AgentClient, NeedReply  # noqa: E402
 from matevolve.loop import LoopConfig, MatEvolve  # noqa: E402
 
 
-def build(args, need_groups: bool = True) -> MatEvolve:
+SKILL = Path(__file__).resolve().parents[1] / "skills" / "matevolve-cluster"
+SKILL_TOOL = SKILL / "scripts" / "cluster_tools.py"
+
+
+def build(args) -> MatEvolve:
     cfg = load_yaml(Path(args.config))
     run_dir = Path(args.run)
+    if (cfg.get("llm") or {}).get("provider") == "agent":
+        cfg.setdefault("llm", {}).setdefault("exchange", str(run_dir / "llm"))   # <run>/llm/{pending,replies,...}
     llm = build_llm(cfg, run_dir / "logs" / "conversations.jsonl", step="matevolve")
     translator = build_translator(cfg, llm)
     operator = build_operator(cfg, llm)
@@ -73,37 +90,60 @@ def build(args, need_groups: bool = True) -> MatEvolve:
     db_csv = Path(args.database or dcfg.get("csv", "database/data.csv"))
     columns = Columns(**{k: v for k, v in (dcfg.get("columns") or {}).items() if k in Columns.__dataclass_fields__})
     db = Database(db_csv, columns)
-    ccfg = cfg.get("clustering") or {}
-    cc = ClusterConfig(**{k: v for k, v in ccfg.items() if k in ClusterConfig.__dataclass_fields__})
-    clusters = Path(ccfg["clusters_json"])
-    if clusters.is_file():
-        grouper = MotifCluster.from_clusters(llm, clusters, run_dir / "grouping", cc)
-    elif need_groups:
-        raise SystemExit(f"motif-group vocabulary {clusters} not found: run 'init --cluster' or scripts/cluster_motifs.py first")
-    else:
-        grouper = MotifCluster(llm, {}, run_dir / "clustering", cc)
     loop_cfg = LoopConfig(**{k: v for k, v in (cfg.get("loop") or {}).items() if k in LoopConfig.__dataclass_fields__})
-    me = MatEvolve(run_dir, db, translator, operator, grouper, loop_cfg)
-    me._clusters_path = clusters  # type: ignore[attr-defined]
+    if getattr(args, "parallel", None):
+        loop_cfg.parallel_chains = args.parallel
+    me = MatEvolve(run_dir, db, translator, operator, loop_cfg)
+    me._clusters_path = Path((cfg.get("clustering") or {}).get("clusters_json", str(db.dir / "motif_groups" / "clusters.json")))  # type: ignore[attr-defined]
     return me
 
 
+def skill_step(me: MatEvolve, what: str, source: Path, state: Path, apply_target: str) -> str:
+    """The hand-over message to the matevolve-cluster skill (run in Claude: Cowork / Claude Code)."""
+    vocab = me._clusters_path  # type: ignore[attr-defined]
+    frozen = vocab.is_file()
+    head = (f"next: assign the {what} to the frozen motif groups with the matevolve-cluster skill"
+            if frozen else f"next: build the motif-group vocabulary from the {what} with the matevolve-cluster skill")
+    init = (f"python {SKILL_TOOL} init --motifs {source} --state {state} --dictionary {vocab}"
+            + (" --only-unassigned" if source.is_dir() else "")) if frozen else \
+           f"python {SKILL_TOOL} init --motifs {source} --state {state} --mode pilot"
+    return "\n".join([
+        head,
+        f"  open {SKILL / 'SKILL.md'} in a Claude session and follow it; the Python steps are:",
+        f"  {init}",
+        f"  python {SKILL_TOOL} passes --state {state} --round 0      # then the worker votes, tally, "
+        + ("finalize" if frozen else "decide / converge ... finalize"),
+        f"  python {SKILL_TOOL} apply --state {state} {apply_target}",
+    ])
+
+
+def report_pending(llm, command: str) -> bool:
+    """Agent transport: list the model replies the skill session has to supply, then the command to re-run."""
+    if not isinstance(llm, AgentClient):
+        return False
+    pend = llm.pending()
+    if not pend:
+        return False
+    print(f"\nMODEL REPLIES NEEDED: {len(pend)} request(s) in {llm.pending_dir}")
+    for req in pend:
+        d = json.loads(req.read_text(encoding="utf-8"))
+        print(f"  {req.name}  step={d.get('step', '')}  chain={d.get('chain', '')}  -> write the reply to {d['reply_file']}")
+    print(f"answer them (see skills/README.md: the worker reads the request file and returns the reply text only),\n"
+          f"then re-run:  {command}")
+    return True
+
+
 def step_init(args) -> None:
-    me = build(args, need_groups=not args.cluster)
-    if args.cluster and not me._clusters_path.is_file():
-        me.translate(assign_groups=False)                      # profiles first (existing .txt files are kept)
-        motifs = me.database_motifs()
-        me.grouper.motifs = motifs
-        resumed = me.grouper.resume()                          # an interrupted run continues from its checkpoint
-        print(f"{'resuming' if resumed else 'starting'} clustering of {len(motifs)} motifs from {len(me.db)} structures ...")
-        result = me.grouper.run()
-        me._clusters_path.parent.mkdir(parents=True, exist_ok=True)
-        (me.grouper.work_dir / "clusters.json").replace(me._clusters_path)
-        print(f"K = {result['K']} motif groups -> {me._clusters_path}")
-        me = build(args)
+    me = build(args)
     me.init()
+    if report_pending(me._agent(), f"python scripts/run_matevolve.py init --config {args.config} --run {args.run}"):
+        return
     print(f"database: {len(me.db)} structures, {len(me.db.validated_ids())} with properties, "
-          f"{len(me.db) - len(me.db.needs_profile())} with motif profiles")
+          f"{len(me.db) - len(me.db.needs_profile())} with motif profiles, {len(me.db.needs_groups())} without motif groups")
+    if me.needs_assignment():
+        print(skill_step(me, "database motifs", me.db.dir, Path(args.run) / "cluster_init", f"--database {me.db.dir}"))
+    else:
+        print("every structure has motif groups: run 'generate'")
 
 
 def check_cli(args) -> None:
@@ -165,12 +205,16 @@ def check_cli(args) -> None:
              f"{len(db) - len(db.needs_profile())} with motif profiles")
     else:
         line("WARN", "database", f"{db_csv} not found: scripts/fetch_database.py or run_matevolve.py template")
-    clusters = Path((cfg.get("clustering") or {}).get("clusters_json", "database/motif_groups/clusters.json"))
+    clusters = Path((cfg.get("clustering") or {}).get("clusters_json", str(db_csv.parent / "motif_groups" / "clusters.json")))
     line("ok" if clusters.is_file() else "WARN", "motif-group vocabulary",
-         str(clusters) if clusters.is_file() else f"{clusters} not found: 'init --cluster' will build it")
+         str(clusters) if clusters.is_file() else f"{clusters} not found: the matevolve-cluster skill builds it (see 'init')")
 
     if args.llm:
         llm = build_llm(cfg)
+        if isinstance(llm, AgentClient):
+            line("ok", "model", "provider 'agent': replies are written by the skill session, nothing to call")
+            llm = None
+    if args.llm and llm is not None:
         try:
             reply = llm.complete([{"role": "user", "content": "Reply with the single word OK."}])
             line("ok", f"model {llm.model}", f"replied {reply[:40]!r}")
@@ -219,7 +263,7 @@ Optional, read by 'score':
 Written by the loop (leave empty):
   {col.generation}, {col.parents}, {col.selected}, {col.groups}, {col.profile_file}, m_stable, m_unstable, m_unknown
 """, encoding="utf-8")
-    print(f"{len(rows)} rows -> {csv_path}; fill in {col.e_hull} (and {col.mu0ms}) then run 'init --cluster'")
+    print(f"{len(rows)} rows -> {csv_path}; fill in {col.e_hull} (and {col.mu0ms}) then run 'init'")
 
 
 def translate_cli(args) -> None:
@@ -239,8 +283,18 @@ def translate_cli(args) -> None:
         cifs = sorted(src.glob("*.cif")) if src.is_dir() else [src]
         for cif in cifs:
             s = Structure.from_file(cif)
-            res = translator.structure_translate(s, source=cif.stem)
             sdir = out / cif.stem
+            if (sdir / "summary.json").is_file():
+                print(f"{cif.stem}: done earlier -> {sdir}")
+                continue
+            if isinstance(llm, AgentClient):
+                llm.chain = cif.stem
+            try:
+                res = translator.structure_translate(s, source=cif.stem)
+            except NeedReply:
+                if len(llm.requested) >= int(getattr(args, "parallel", 6) or 6):
+                    break
+                continue
             res.save(sdir)
             line = f"{cif.stem}: accepted={res.accepted} attempts={len(res.attempts)}"
             if res.profile is not None:
@@ -250,6 +304,7 @@ def translate_cli(args) -> None:
                 d = rmsd(s, res.rebuilt)
                 line += f" match={structures_match(s, res.rebuilt, REPORT_TOLERANCES)} rmsd={d if d is None else round(d, 3)}"
             print(line, "->", sdir)
+        report_pending(llm, f"python scripts/run_matevolve.py structure-translate --config {args.config} --cif {args.cif} --out {out}")
         return
 
     prof_path = Path(args.profile)
@@ -269,7 +324,13 @@ def translate_cli(args) -> None:
             raise SystemExit("the profile has no 'Composition:' line: pass --composition")
         design = DesignConcept(composition=prof.composition, text_description=prof.text_description(),
                                motifs=[m.text for m in prof.motifs], operator="MANUAL")
-    res = translator.motif_translate(design)
+    if isinstance(llm, AgentClient):
+        llm.chain = prof_path.stem
+    try:
+        res = translator.motif_translate(design)
+    except NeedReply:
+        report_pending(llm, f"python scripts/run_matevolve.py motif-translate --config {args.config} --profile {args.profile} --out {out}")
+        return
     sdir = out / prof_path.stem
     res.save(sdir)
     print(f"{prof_path.stem}: accepted={res.accepted} attempts={len(res.attempts)}"
@@ -282,8 +343,7 @@ def main() -> None:
     ap.add_argument("--config", required=True)
     ap.add_argument("--run", default="runs/matevolve", help="run directory (gen_XX/, translate/, logs/)")
     ap.add_argument("--database", help="path of data.csv (default: database.csv in the config)")
-    ap.add_argument("--gen", type=int, help="generation number (generate / update)")
-    ap.add_argument("--cluster", action="store_true", help="init: build the motif-group vocabulary from the database if missing")
+    ap.add_argument("--gen", type=int, help="override the generation number detected from the database (generate / update)")
     ap.add_argument("--grid-search-alpha", action="store_true", help="score: re-select the ERS alpha by cross-validation")
     ap.add_argument("--score", action="store_true", help="update: also write the ERS report")
     ap.add_argument("--cif", help="structure-translate: a CIF file or a folder of CIFs")
@@ -293,6 +353,7 @@ def main() -> None:
     ap.add_argument("--cifs", help="template: folder of CIFs to list in data.csv (copied into the database folder)")
     ap.add_argument("--force", action="store_true", help="template: overwrite an existing data.csv")
     ap.add_argument("--llm", action="store_true", help="check: also send one short message to the model")
+    ap.add_argument("--parallel", type=int, default=None, help="agent transport: chains advanced per run (default loop.parallel_chains)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -311,21 +372,50 @@ def main() -> None:
     if args.step == "init":
         step_init(args)
         return
-    if args.gen is None and args.step in ("generate", "update"):
-        ap.error(f"{args.step} needs --gen")
     me = build(args)
     g = args.gen
     if args.step == "generate":
-        me.propose(g)
+        if g is None:
+            g, why = me.generation_to_generate()
+            if why:
+                raise SystemExit(why)
+        pending = me.needs_assignment()
+        if pending:
+            raise SystemExit(f"{len(pending)} pool structures have a profile but no motif groups yet.\n"
+                             + skill_step(me, "database motifs", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {me.db.dir}"))
+        gdir = me.gen_dir(g)
+        if not (gdir / "offspring.json").is_file() or len(json.loads((gdir / "offspring.json").read_text())) < me.cfg.offspring_per_generation:
+            print(f"database: generations 0..{g - 1} present -> generating the offspring of generation {g}")
+            offspring = me.propose(g)
+            if report_pending(me._agent(), f"python scripts/run_matevolve.py generate --config {args.config} --run {args.run}"):
+                print(f"generation {g}: {len(offspring)}/{me.cfg.offspring_per_generation} offspring accepted so far")
+                return
+        if me.unassigned_offspring(g):
+            print(f"generation {g}: {len(me.unassigned_offspring(g))} offspring proposed, motif groups not assigned yet.")
+            print(skill_step(me, f"offspring of generation {g}", gdir / "offspring.json", gdir / "cluster_offspring",
+                             f"--offspring {gdir / 'offspring.json'}"))
+            print("then run 'generate' again: it ranks the offspring and exports the selected ones for the DFT tool")
+            return
         for i, row in enumerate(me.rank(g)[:10], 1):
             print(i, *row)
-        print("exported:", me.export(g), "-- run the DFT tool, then 'update --gen", g, "'")
+        print("exported:", me.export(g), "-- run the DFT tool, add the relaxed structures to the database, then 'update'")
     elif args.step == "update":
-        n_t, n_g = me.translate_generation(g)
-        print(f"{n_t} structures translated, {n_g} assigned to motif groups")
+        if g is None:
+            g, why = me.generation_to_update()
+            if why:
+                raise SystemExit(why)
+            print(f"database: newest generation is {g} -> updating generation {g}")
+        n_t = me.translate_generation(g)
+        print(f"{n_t} structures translated")
+        if report_pending(me._agent(), f"python scripts/run_matevolve.py update --config {args.config} --run {args.run}"):
+            return
         if args.score:
             me.score(grid_search_alpha=args.grid_search_alpha)
-        print(me.next_generation(g)[1])
+        ok, why = me.next_generation(g)
+        print(why)
+        if me.needs_assignment():
+            print(skill_step(me, "new structures", me.db.dir, Path(args.run) / f"cluster_db_g{g:02d}", f"--database {me.db.dir}"))
+            print("then run 'generate' for the next generation")
     elif args.step == "score":
         print(json.dumps(me.score(grid_search_alpha=args.grid_search_alpha), indent=1))
 

@@ -93,3 +93,17 @@ def test_dempster_stays_normalized_under_many_combinations():
         focal = "not_sub" if i % 7 == 0 else "sub"
         m = m.combine(MassFunction(frame, {frozenset([focal]): 0.1}))
     assert abs(sum(m.values()) - 1.0) < 1e-9 and 0.0 <= m.mass({"sub"}) <= 1.0
+
+
+def test_saturated_opposite_hosts_do_not_break_the_target_mass():
+    """Hundreds of agreeing observations saturate M(C_t, C_v) to 1.0 in float; a stable and an unstable
+    host reaching the same candidate with such weights must still combine (no total conflict)."""
+    obs = []
+    for i in range(400):                                   # {A} <-> {B} always label-preserving ...
+        obs += [Observation.make(f"a{i}", ["A", "X"], True), Observation.make(f"b{i}", ["B", "X"], True)]
+    obs += [Observation.make("u", ["A", "Y"], False)]       # ... and an unstable host with the same exchange
+    for i in range(400):
+        obs += [Observation.make(f"c{i}", ["A", "Y"], False), Observation.make(f"d{i}", ["B", "Y"], False)]
+    ers = ERS(alpha=0.9).fit(obs)
+    m = ers.target_mass(["B", "X", "Y"])                   # reached from stable {A,X,Y}-like hosts and unstable ones alike
+    assert abs(sum(m.values()) - 1) < 1e-9 and 0 <= m.mass({"top"}) <= 1

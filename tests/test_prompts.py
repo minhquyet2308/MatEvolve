@@ -7,16 +7,27 @@ from matevolve.prompts import PROMPT_ROOT, fill, load_prompt
 REQUIRED = ["cif2text/system.txt", "cif2text/user.txt", "standardizer/system.txt", "standardizer/user.txt",
             "standardizer/motif_vocabulary.md", "text2cif/system.txt", "text2cif/user.txt",
             "evo_operator/system.txt", "evo_operator/crossover.txt", "evo_operator/mutation.txt",
-            "coverage/system.txt", "coverage/user.txt", "cluster/resolution_rule.md",
-            "cluster/assign_system.txt", "cluster/assign_user.txt", "cluster/seed_system.txt", "cluster/seed_user.txt",
-            "cluster/update_prototype_system.txt", "cluster/update_prototype_user.txt",
-            "cluster/merge_system.txt", "cluster/merge_user.txt", "cluster/split_system.txt", "cluster/split_user.txt"]
+            "coverage/system.txt", "coverage/user.txt"]
+SKILL_FILES = ["SKILL.md", "scripts/cluster_tools.py", "references/resolution_rule.md", "references/assign_prompt.md",
+               "references/seed_prompt.md", "references/update_prototype_prompt.md", "references/merge_prompt.md",
+               "references/split_prompt.md", "references/consensus_rules.md"]
 
 
 def test_all_prompt_files_present():
     for rel in REQUIRED:
         assert (PROMPT_ROOT / rel).is_file(), rel
         assert load_prompt(rel).strip()
+    skill = Path(__file__).resolve().parents[1] / "skills" / "matevolve-cluster"
+    for rel in SKILL_FILES:                      # the clustering / assignment skill ships with the repository
+        assert (skill / rel).is_file(), rel
+    skills = skill.parent                        # the framework skills call the same CLI with the agent transport
+    assert (skills / "README.md").is_file() and (skills / "references" / "worker_prompt.md").is_file()
+    for name, cmd in (("matevolve-structure-translate", "structure-translate"), ("matevolve-motif-translate", "motif-translate"),
+                      ("matevolve-loop", "generate")):
+        text = (skills / name / "SKILL.md").read_text(encoding="utf-8")
+        assert text.startswith("---\nname: " + name), name
+        assert "run_matevolve.py" in text and cmd in text and "configs/agent_run.yaml" in text, name
+    assert (skill.parents[1] / "configs" / "agent_run.yaml").is_file()
 
 
 def test_fill_keeps_json_braces():

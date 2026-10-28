@@ -13,6 +13,7 @@ hosted or self-hosted models.  :class:`RecordingClient` and
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -239,6 +240,96 @@ class RecordingClient(LLMClient):
         return reply
 
 
+class NeedReply(Exception):
+    """Raised by :class:`AgentClient` when a model reply has to be supplied by the agent session.
+
+    The caller (a translation chain, a design step) stops; the orchestrating
+    agent answers the request file and re-runs the command, which replays all
+    earlier replies and continues from here.
+    """
+
+    def __init__(self, request_path: Path, request_id: str, step: str) -> None:
+        super().__init__(f"model reply needed: {request_path}")
+        self.request_path = Path(request_path)
+        self.request_id = request_id
+        self.step = step
+
+
+class AgentClient(LLMClient):
+    """The skill transport: model replies are written by the Claude session that runs the skill.
+
+    Same code path as the API clients -- every agent calls ``complete(messages)`` --
+    but the reply is exchanged through files under ``exchange``::
+
+        pending/<id>.json   a request the agent has to answer (system prompt, messages, step)
+        replies/<id>.txt    the reply, written by the agent (the orchestrator or a worker sub-agent)
+        conversations.jsonl every answered exchange, same format as RecordingClient
+
+    ``<id>`` is a hash of the message sequence, so re-running a command replays the
+    replies already given (deterministically, the code asks the same questions in
+    the same order) and raises :class:`NeedReply` at the first unanswered one.  The
+    same request asked twice (identical messages) receives the same reply.
+    """
+
+    def __init__(self, exchange: Path, model: str = "agent", temperature: float = DEFAULT_TEMPERATURE) -> None:
+        super().__init__(model, temperature)
+        self.exchange = Path(exchange)
+        self.pending_dir = self.exchange / "pending"
+        self.replies_dir = self.exchange / "replies"
+        self.pending_dir.mkdir(parents=True, exist_ok=True)
+        self.replies_dir.mkdir(parents=True, exist_ok=True)
+        self.step = ""                      # label of the current step (set by the caller for the request files)
+        self.chain = ""                     # label of the current chain (structure id / design step)
+        self.requested: List[Path] = []     # requests raised during this process
+
+    @staticmethod
+    def request_id(messages: Sequence[Message]) -> str:
+        payload = json.dumps([{"role": m["role"], "content": m["content"]} for m in messages], ensure_ascii=False)
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+    def complete(self, messages: Sequence[Message], temperature: Optional[float] = None) -> str:
+        rid = self.request_id(messages)
+        reply_path = self.replies_dir / f"{rid}.txt"
+        if reply_path.is_file():
+            reply = reply_path.read_text(encoding="utf-8").strip()
+            if reply:
+                self._log_once(rid, messages, reply)
+                pend = self.pending_dir / f"{rid}.json"
+                if pend.is_file():
+                    pend.unlink()
+                return reply
+        req = self.pending_dir / f"{rid}.json"
+        if not req.is_file():
+            system = next((m["content"] for m in messages if m["role"] == "system"), "")
+            req.write_text(json.dumps({
+                "id": rid, "step": self.step, "chain": self.chain,
+                "reply_file": str(reply_path),
+                "instructions": "Act as the language model of this agent: read the system prompt and the conversation, "
+                                "and write the next assistant reply -- the reply text only, no commentary -- to reply_file.",
+                "system": system,
+                "messages": [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"],
+            }, indent=1, ensure_ascii=False), encoding="utf-8")
+        self.requested.append(req)
+        raise NeedReply(req, rid, self.step)
+
+    def _log_once(self, rid: str, messages: Sequence[Message], reply: str) -> None:
+        used = self.exchange / "used.txt"
+        seen = set(used.read_text().split()) if used.is_file() else set()
+        if rid in seen:
+            return
+        ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with (self.exchange / "conversations.jsonl").open("a", encoding="utf-8") as fh:
+            for m in messages:
+                fh.write(json.dumps({"step": self.step, "chain": self.chain, "role": m["role"], "content": m["content"], "ts": ts}) + "\n")
+            fh.write(json.dumps({"step": self.step, "chain": self.chain, "role": "assistant", "content": reply, "ts": ts}) + "\n")
+        with used.open("a") as fh:
+            fh.write(rid + "\n")
+
+    def pending(self) -> List[Path]:
+        """Every request still waiting for a reply (across runs)."""
+        return sorted(self.pending_dir.glob("*.json"))
+
+
 class ScriptedClient(LLMClient):
     """Offline client for tests: replies come from a queue or a callback."""
 
@@ -261,7 +352,8 @@ class ScriptedClient(LLMClient):
 class LLMConfig:
     """Serializable description of a client (see ``configs/*.yaml``)."""
 
-    provider: str = "anthropic"          # anthropic | openai
+    provider: str = "anthropic"          # anthropic | openai | agent (replies supplied by the Claude session running a skill)
+    exchange: str = "runs/matevolve/llm"  # provider agent: folder of the request / reply files
     model: str = DEFAULT_MODEL
     temperature: float = DEFAULT_TEMPERATURE
     max_tokens: int = 16000
@@ -275,6 +367,8 @@ class LLMConfig:
             return AnthropicClient(self.model, self.temperature, self.max_tokens, api_key=api_key)
         if self.provider == "openai":
             return OpenAICompatibleClient(self.model, self.temperature, base_url=self.base_url, api_key=api_key, max_tokens=self.max_tokens)
+        if self.provider == "agent":
+            return AgentClient(Path(self.exchange), self.model, self.temperature)
         raise ValueError(f"unknown LLM provider {self.provider!r}")
 
 

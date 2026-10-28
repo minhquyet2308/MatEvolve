@@ -18,3 +18,5 @@ database/
 !tests/data/**/*.cif
 *.tgz
 *.zip
+*.tar.gz
+local/

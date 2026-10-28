@@ -1,0 +1,186 @@
+% =====================================================================
+% Agentic consensus clustering of structural motifs
+% Drop-in manuscript section. \input{consensus_clustering} or paste.
+% Requires in the preamble:
+%   \usepackage{amsmath,amssymb}
+%   \usepackage{booktabs}
+%   \usepackage{algorithm}
+%   \usepackage{algpseudocode}   % (algorithmicx)
+% =====================================================================
+
+\section{Agentic consensus clustering of structural motifs}
+\label{sec:cluster}
+
+We partition the $N$ motif descriptions into $K$ groups of similar geometry with
+an agentic analogue of Lloyd's $k$-means algorithm in which the metric space is
+replaced by a large language model (LLM). Each motif $m_i$ is a natural-language
+description rather than a feature vector, and each cluster centroid $p_k$ is a
+short textual \emph{prototype} that states the geometry its members share. The
+algorithm keeps the two alternating steps of $k$-means---assignment and
+centroid update---and adds a model-adaptation step so that the number of clusters
+$K$ is discovered rather than fixed (Table~\ref{tab:kmeans}).
+
+Crucially, the LLM is used only as a \emph{qualitative} operator: each worker
+casts a single categorical vote (the prototype a motif best matches, or
+``none''), and never produces or compares numbers. All quantitative
+quantities---per-motif consensus, inter-cluster confusion, co-association, and
+the convergence statistics---are computed by a deterministic routine from the
+vote logs. This assigns to the LLM the judgement it performs well (geometric
+similarity of free text) and to ordinary code the counting it performs exactly,
+and it makes every merge, split, and stopping decision reproducible. The scheme
+is a form of consensus / evidence-accumulation clustering, with the stochastic
+LLM assignment supplying the base partitions.
+
+\begin{table}[t]
+\centering
+\caption{Correspondence between classical $k$-means and the agentic scheme.}
+\label{tab:kmeans}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Classical $k$-means & Agentic consensus clustering \\
+\midrule
+data point $x_i$ (vector)            & motif $m_i$ (text) \\
+centroid $\mu_k$ (mean vector)       & prototype $p_k$ (text) \\
+distance $\lVert x_i-\mu_k\rVert$    & LLM vote: nearest $p_k$ or ``none'' \\
+assignment $c(i)=\arg\min_k$         & ensemble of $R$ votes $\to$ dominant $d(i)$ \\
+update $\mu_k=\mathrm{mean}(C_k)$    & LLM re-writes $p_k$ from members \\
+fixed $K$                            & $K$ discovered (birth / split / merge) \\
+labels stop moving                   & consensus high \emph{and} partition stable \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Ensemble assignment and consensus}
+
+Let prototypes be $P=\{p_k\}_{k=1}^{K}$ and let each motif $m_i$ be assigned $R$
+times across randomized, overlapping batches, giving labels
+$a_r(i)\in\{1,\dots,K,\varnothing\}$ for $r=1,\dots,R$ ($\varnothing$ = ``none'').
+With vote counts $n_{i,k}=\lvert\{r:a_r(i)=k\}\rvert$, the dominant assignment and
+its consensus are
+\begin{equation}
+d(i)=\arg\max_{k} n_{i,k},
+\qquad
+s_i=\frac{n_{i,d(i)}}{R}\in(0,1].
+\label{eq:assign}
+\end{equation}
+A motif is \emph{confident} when $s_i\ge s^\star$ and \emph{contested} otherwise;
+a motif with $d(i)=\varnothing$ is an outlier. Equation~\eqref{eq:assign} is the
+ensemble counterpart of the $k$-means assignment step, with low $s_i$ playing the
+role of a large distance to the nearest centroid.
+
+\subsection{Centroid update}
+
+Writing $C_k=\{i:d(i)=k\}$, the prototype is recomputed by an LLM summarizer
+$\Gamma$ that reads (a sample of) the members and re-states their shared geometry,
+\begin{equation}
+p_k \leftarrow \Gamma\!\left(\{\,m_i : i\in C_k\,\}\right),
+\label{eq:update}
+\end{equation}
+the textual analogue of the arithmetic mean $\mu_k=\frac{1}{|C_k|}\sum_{i\in
+C_k}x_i$.
+
+\subsection{Discovering $K$: birth, merge, split}
+
+Unlike $k$-means, $K$ adapts. Recurring outliers seed new prototypes
+(\emph{birth}). Redundant and over-broad clusters are detected directly from the
+vote log. The \emph{confusion} between two clusters,
+\begin{equation}
+\mathrm{confuse}(A,B)=\bigl|\{\,i:\ n_{i,A}>0 \ \wedge\ n_{i,B}>0\,\}\bigr|,
+\qquad
+\varphi(A,B)=\frac{\mathrm{confuse}(A,B)}{\min(|C_A|,|C_B|)},
+\label{eq:phi}
+\end{equation}
+counts motifs voted into \emph{both} $A$ and $B$; when $\varphi(A,B)\ge
+\varphi_{\mathrm{merge}}$ the two prototypes are indistinguishable to the model
+and are \emph{merged}. A cluster is a \emph{split} candidate when its contested
+fraction $q_A=|\{i\in C_A:s_i<s^\star\}|/|C_A|$ exceeds $q_{\mathrm{split}}$;
+whether it splits or merges is decided by where the stray votes point. If they
+concentrate on a single rival the cluster is merged with it; otherwise the
+\emph{co-association}
+\begin{equation}
+C_{ij}=\frac{1}{R}\bigl|\{\,r:\ a_r(i)=a_r(j)\ne\varnothing\,\}\bigr|
+\label{eq:coassoc}
+\end{equation}
+is thresholded ($C_{ij}\ge c_{\mathrm{th}}$) and its connected components define
+the sub-clusters along which $C_A$ is split. A just-split pair is barred from
+re-merging for one round (hysteresis), which suppresses split--merge oscillation.
+
+\subsection{Convergence}
+
+Two statistics govern termination: the mean consensus
+$\bar s_t=\frac{1}{N}\sum_i s_i$ (a partition-quality gate) and the
+label-invariant partition change
+\begin{equation}
+\rho_t = 1-\mathrm{ARI}\!\left(d_t,\,d_{t-1}\right),
+\label{eq:rho}
+\end{equation}
+where $\mathrm{ARI}$ is the Adjusted Rand Index between successive rounds'
+assignments (invariant to the relabeling induced by merge/split). Because the
+prototype is re-written by the \emph{stochastic} operator $\Gamma$ at each
+M-step, assignment stability ($\rho_t\!\to\!0$) does not by itself imply that the
+centroids have settled---unlike Euclidean $k$-means, where the centroid is a
+deterministic mean of its members. We therefore add a \emph{prototype-stability}
+condition, the textual analogue of the centroid-shift test
+$\lVert\mu^{t}-\mu^{t-1}\rVert<\mathrm{tol}$. Rather than thresholding a numeric
+distance between texts, we let the model judge it: after the M-step, an LLM
+compares each cluster's previous and updated prototype and returns
+$\sigma_k^{(t)}=1$ if they describe the \emph{same} archetype under the resolution
+rule (pure wording changes excluded) and $0$ otherwise. The round's stability is
+the fraction
+\begin{equation}
+\Sigma_t=\frac1K\sum_{k=1}^{K}\sigma_k^{(t)},
+\label{eq:protostab}
+\end{equation}
+and the round is prototype-stable when no birth/merge/split occurred and
+$\Sigma_t\ge\sigma_{\min}$. As an optimization, a cluster whose membership is
+unchanged (Jaccard $J_k=\lvert C_k^{(t)}\cap C_k^{(t-1)}\rvert/\lvert
+C_k^{(t)}\cup C_k^{(t-1)}\rvert\ge J_{\mathrm{freeze}}$) is taken as stable without
+a comparison and need not be re-synthesized. The algorithm stops when $\bar
+s_t\ge s_{\min}$, $\rho_t<\varepsilon$, and prototype stability all hold for two
+consecutive rounds, or at a round cap. Because $\bar s_t$ enters the test, a
+partition that is merely stationary but internally inconsistent (low consensus)
+cannot be accepted; its contested clusters are exactly those that birth, merge,
+or split acts upon.
+
+\begin{algorithm}[t]
+\caption{Agentic consensus $k$-means for motif clustering}
+\label{alg:cluster}
+\begin{algorithmic}[1]
+\Require motifs $M=\{m_i\}_{i=1}^N$; replicates $R$; seed count $K_0$;
+         thresholds $s^\star,\varphi_{\mathrm{merge}},q_{\mathrm{split}},
+         c_{\mathrm{th}},s_{\min},\varepsilon,\sigma_{\min}$
+\State $P \gets \Gamma(\text{stratified sample of } M)$
+       \Comment{seed $K_0$ prototypes (LLM)}
+\Repeat
+  \State cast $R$ votes $a_r(i)$ for every $m_i$ against $P$
+         \Comment{E-step: assign (LLM, parallel)}
+  \State $d(i)\gets\arg\max_k n_{i,k};\quad s_i\gets n_{i,d(i)}/R$
+         \Comment{tally (code)}
+  \ForAll{clusters $k$ with changed membership}
+     \State $p_k^{\mathrm{old}}\gets p_k;\quad p_k \gets \Gamma(\{m_i:d(i)=k\})$
+            \Comment{M-step: update centroid (LLM)}
+     \State $\sigma_k\gets \textsc{SameArchetype}(p_k^{\mathrm{old}},p_k)$
+            \Comment{prototype-shift test (LLM)}
+  \EndFor
+  \State birth new prototypes from recurring outliers
+         \Comment{grow $K$ (LLM)}
+  \State merge $\{A,B:\varphi(A,B)\!\ge\!\varphi_{\mathrm{merge}}\}$;
+         split clusters with $q_A\!>\!q_{\mathrm{split}}$ via
+         co-association \Comment{adapt $K$ (code decides, LLM names)}
+  \State $\bar s_t\gets\tfrac1N\sum_i s_i;\quad
+         \rho_t\gets 1-\mathrm{ARI}(d_t,d_{t-1});\quad
+         \Sigma_t\gets\tfrac1K\sum_k\sigma_k$ \Comment{code}
+\Until{$\bar s_t\!\ge\!s_{\min}$, $\rho_t\!<\!\varepsilon$, and
+       $\Sigma_t\!\ge\!\sigma_{\min}$ (no structural change) for two rounds}
+\State \Return clusters $\{C_k\}$ and prototypes $P$
+\end{algorithmic}
+\end{algorithm}
+
+Geometric similarity is judged only by the LLM votes, so the procedure requires
+no descriptor engineering or embedding; conversely, the LLM is never asked to
+produce a number, so the quantitative criteria in
+Eqs.~\eqref{eq:assign}--\eqref{eq:rho} are exact and reproducible. Unlike
+Euclidean $k$-means, the vote operator is stochastic and the objective is not
+guaranteed to decrease monotonically; the ensemble over $R$ replicates suppresses
+this variance, and convergence is enforced by the two-round stability-and-quality
+criterion above.

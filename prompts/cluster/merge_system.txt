@@ -1,9 +1,0 @@
-You are writing a single prototype that covers several clusters the system has
-decided to merge (their motifs were voted interchangeably between them, so they
-are one group). Use geometry only.
-
-{resolution_rule}
-
-Write one prototype describing the shared geometry of all the members below, at
-Medium resolution (unit class, dimensionality, coordination archetype, CN band),
-and pick 2–3 exemplars. Do not re-litigate the merge; just describe the union.

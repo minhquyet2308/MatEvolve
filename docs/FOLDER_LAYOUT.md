@@ -40,8 +40,10 @@ unselected rows `generation` is a lower bound inferred from their parents (see t
 
 ```
 configs/magnet_run.yaml                every run setting (LLM, budgets, thresholds, database path and column names)
+configs/agent_run.yaml                 the same with llm.provider: agent -- the skill version (model replies exchanged as files)
 database/motif_groups/clusters.json    frozen motif-group vocabulary (clustering.clusters_json): the 17 groups of the reported run ship with the
-                                       database (label, prototype, exemplars, members, outliers); init --cluster rebuilds it if absent
+                                       database (label, prototype, exemplars, members, outliers); written by the matevolve-cluster skill
+                                       (`cluster_tools.py apply --database`) when a fresh database is clustered
 ```
 
 ## Run directory (`--run runs/<name>`)
@@ -50,13 +52,19 @@ database/motif_groups/clusters.json    frozen motif-group vocabulary (clustering
 runs/<name>/
 ├── translate/<id>/                    Structure Translate trail of every translated database row
 │   ├── profile.json, rebuilt.cif, attempts.json, summary.json
-├── grouping/round_999_votes.json      worker votes when motifs are assigned to the frozen groups
-├── logs/conversations.jsonl           every model message of the run (step, role, content, timestamp)
+├── cluster_init/, cluster_db_gXX/        state folders of the matevolve-cluster skill (motifs.json, prototypes.json, round_XX/ votes,
+│                                      assignments_final.csv, clusters.json): initial clustering / assignment of each generation's new structures
+├── logs/conversations.jsonl           every model message of the run (step, role, content, timestamp) -- API providers
+├── llm/                               agent transport (llm.provider: agent, the skill version) instead of the API
+│   ├── pending/<id>.json              requests waiting for a reply: id, step, chain, system, messages, reply_file, instructions
+│   ├── replies/<id>.txt               the replies written by the session (or by hand); <id> = hash of the conversation
+│   ├── conversations.jsonl, used.txt  every answered exchange (same format as logs/conversations.jsonl), ids already logged
 ├── metrics.json                       optional `score` report — benchmark counts (stable, unique, novel, SUN, magnetic, new prototype,
 │                                      joint) for seeds, each generation (selected vs unselected) and all candidates; ERS evidence
 └── gen_XX/
     ├── offspring.json                 step 1 — accepted offspring: oid, cif (pre-relaxed, primitive), cif_raw, parents,
-    │                                  composition, motif_groups, profile_path (T′_off), design_step
+    │                                  composition, motif_groups (filled by the skill's `apply --offspring`), profile_path (T′_off), design_step
+    ├── cluster_offspring/             state folder of the skill's assignment of the offspring motifs
     ├── design_steps/step_NNNN/        every design step, accepted or rejected
     │   ├── design.json                EvoOperator output: motifs, composition, text_description, parents, operator
     │   ├── final.cif, final_raw_llm.cif, reprofile.json   (accepted only)
@@ -80,5 +88,4 @@ runs/<name>/
 ```
 runs/<name>/structure_translate/<sid>/{<sid>.txt, profile.json, rebuilt.cif, attempts.json, summary.json}
 runs/<name>/motif_translate/<sid>/{final.cif, final_raw_llm.cif, reprofile.json, attempts.json, summary.json}
-runs/<name>/clustering/{checkpoint.json, round_XX_votes.json}      init --cluster (the result goes to clustering.clusters_json)
 ```

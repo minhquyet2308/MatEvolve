@@ -4,10 +4,11 @@ import csv
 import json
 import re
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from matevolve.agents import CIF2Text, CoverageJudge, EvoOperator, Text2CIF
-from matevolve.clustering import ClusterConfig, MotifCluster
 from matevolve.database import Database
 from matevolve.llm import ScriptedClient
 from matevolve.loop import LoopConfig, MatEvolve
@@ -34,9 +35,6 @@ def make_responder(cif_text):
         if system.startswith("You are a materials design assistant"):
             return json.dumps({"designs": [{"motifs": [{"motif #1": "A [network] of [framework] Fe ..."}],
                                             "composition": "Fe", "text_description": "bcc iron"}]})
-        if "matching crystal motif descriptions to the prototype" in system:
-            ids = re.findall(r"- id: (\S+)", last.split("Motifs to vote on:")[1])
-            return json.dumps({"votes": [{"id": i, "label": 4} for i in ids]})
         raise AssertionError(system[:60])
     return respond
 
@@ -44,11 +42,26 @@ def make_responder(cif_text):
 def build(tmp_path, bcc_fe, db_csv):
     llm = ScriptedClient(responder=make_responder(bcc_fe.to(fmt="cif")))
     translator = Translator(CIF2Text(llm), Text2CIF(llm, prerelax=False), CoverageJudge(llm))
-    clusters = {"K": 1, "groups": {"4": {"label": "network", "prototype": "network, 3D", "exemplars": [], "members": []}}, "outliers": [], "history": []}
-    (tmp_path / "clusters.json").write_text(json.dumps(clusters))
-    grouper = MotifCluster.from_clusters(llm, tmp_path / "clusters.json", tmp_path / "grouping", ClusterConfig(batch_size=10))
-    cfg = LoopConfig(n_generations=2, offspring_per_generation=3, dft_budget_per_generation=2, parent_pool_size=2, max_design_steps_factor=4)
-    return MatEvolve(tmp_path / "run", Database(db_csv), translator, EvoOperator(llm), grouper, cfg)
+    cfg = LoopConfig(n_generations=2, offspring_per_generation=3, dft_budget_per_generation=2, parent_pool_size=2, max_design_steps_factor=10)
+    return MatEvolve(tmp_path / "run", Database(db_csv), translator, EvoOperator(llm), cfg)
+
+
+SKILL_TOOL = Path(__file__).resolve().parents[1] / "skills" / "matevolve-cluster" / "scripts" / "cluster_tools.py"
+
+
+def skill_assign(state: Path, motif_ids, group, **apply_args):
+    """Stand-in for the matevolve-cluster skill: every motif voted into `group`, written back with `apply`."""
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "checkpoint.json").write_text(json.dumps({"round": 0, "frozen_dictionary": "x", "params": {}}))
+    with (state / "assignments_final.csv").open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["motif_id", "cluster_id"])
+        for mid in motif_ids:
+            w.writerow([mid, group])
+    cmd = [sys.executable, str(SKILL_TOOL), "apply", "--state", str(state)]
+    for k, v in apply_args.items():
+        cmd += [f"--{k}", str(v)]
+    subprocess.run(cmd, check=True, capture_output=True)
 
 
 def test_database_reads_authors_table_and_legacy_profiles(tmp_path):
@@ -85,16 +98,32 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
     bcc_fe.to(filename=str(dbdir / "seed-b.cif"))
     me = build(tmp_path, bcc_fe, dbdir / "data.csv")
 
-    # step 0: translate seeds, assign groups
+    # step 0: translate seeds; the motif groups come from the skill (here: its `apply` with scripted votes)
     me.init()
     db = Database(dbdir / "data.csv")
-    assert all(db.groups(s) == ["G_4"] and db.get(s)["profile_file"] == f"{s}.txt" for s in ("seed-a", "seed-b"))
+    assert all(db.get(s)["profile_file"] == f"{s}.txt" and db.groups(s) == [] for s in ("seed-a", "seed-b"))
     assert (dbdir / "seed-a.txt").is_file() and (dbdir / "seed-a.profile.json").is_file()
     assert db.get("seed-a")["generation"] == "0"
+    assert sorted(me.needs_assignment()) == ["seed-a", "seed-b"]
+    motifs = [f"{s}:{m.motif_id}" for s in ("seed-a", "seed-b") for m in me.load_profile(s).motifs]
+    skill_assign(tmp_path / "skill_db", motifs, 4, database=dbdir)
+    me.db = Database(dbdir / "data.csv")
+    assert all(me.db.groups(s) == ["G_4", "G_4"] for s in ("seed-a", "seed-b")) and me.needs_assignment() == []
 
-    # step 1: generate + recommend
+    # the generation number is read from the database: seeds only -> generate 1, nothing to update
+    assert me.last_generation() == 0 and me.generation_to_generate() == (1, None)
+    assert me.generation_to_update()[0] == 0 and "nothing to update" in me.generation_to_update()[1]
+
+    # step 1: generate; the offspring motifs are assigned by the skill before the ERS can rank them
     offspring = me.propose(1)
-    assert len(offspring) == 3 and all(o["motif_groups"] == ["G_4"] for o in offspring)
+    assert len(offspring) == 3 and all(o["motif_groups"] == [] for o in offspring)
+    assert sorted(me.unassigned_offspring(1)) == [o["oid"] for o in offspring]
+    import pytest
+    with pytest.raises(RuntimeError, match="no motif groups"):
+        me.rank(1)
+    omotifs = [f"{o['oid']}:{m['motif_id']}" for o in offspring for m in json.loads(Path(o["profile_path"]).read_text())["motifs"]]
+    skill_assign(tmp_path / "skill_off", omotifs, 4, offspring=tmp_path / "run" / "gen_01" / "offspring.json")
+    assert me.unassigned_offspring(1) == []
     assert len(me.rank(1)) == 3 and len(me.selected(1)) == 2
     assert me.next_generation(1)[0] is False
 
@@ -105,6 +134,9 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
     assert all((tmp_path / "run" / "gen_01" / "dft" / r["oid"] / "structure.cif").is_file() for r in rows)
     prov = {r["new_material_id"]: r for r in csv.DictReader((tmp_path / "run" / "gen_01" / "offspring.csv").open())}
     assert set(prov) == {r["oid"] for r in rows} and prov[rows[0]["oid"]]["generation"] == "1"
+    # exported but not back in the database: 'generate' must not start generation 1 again
+    g, why = me.generation_to_generate()
+    assert g == 1 and "already been exported" in why and me.exported_generation() == 1
 
     # ... the authors run DFT and update the database: relaxed CIFs + property rows ...
     for oid, p in prov.items():
@@ -113,11 +145,19 @@ def test_steps_0_to_4(tmp_path, bcc_fe):
                   energy_above_hull=0.05, mu0M_T_corrected=2.2)
     me.db.save()
 
-    # step 3: translate the relaxed structures
-    n_t, n_g = me.translate_generation(1)
-    assert n_t == 3 and n_g == 3
+    # the rows are back: 'update' targets generation 1, 'generate' would start generation 2
+    assert me.last_generation() == 1 and me.generation_to_update() == (1, None) and me.generation_to_generate() == (2, None)
+
+    # step 3: translate the relaxed structures; then the skill assigns their motifs
+    n_t = me.translate_generation(1)
+    assert n_t == 3
     db = Database(dbdir / "data.csv")
-    assert all(db.get(oid)["profile_file"] == f"{oid}.txt" and db.groups(oid) == ["G_4"] for oid in prov)
+    assert all(db.get(oid)["profile_file"] == f"{oid}.txt" and db.groups(oid) == [] for oid in prov)
+    assert me.next_generation(1)[0] is False and "motif groups" in me.next_generation(1)[1]
+    nmotifs = [f"{oid}:{m.motif_id}" for oid in prov for m in me.load_profile(oid).motifs]
+    skill_assign(tmp_path / "skill_g1", nmotifs, 4, database=dbdir)
+    me.db = Database(dbdir / "data.csv")
+    assert all(me.db.groups(oid) == ["G_4", "G_4"] for oid in prov)
 
     # optional report: ERS scores for every row + metrics
     m = me.score()

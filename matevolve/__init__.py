@@ -6,7 +6,6 @@ Package map:
 * :mod:`matevolve.profile`      -- the motif profile text representation
 * :mod:`matevolve.agents`       -- CIF2Text, Text2CIF, EvoOperator, Coverage
 * :mod:`matevolve.translate`    -- Structure Translate / Motif Translate loops
-* :mod:`matevolve.clustering`   -- agentic consensus clustering of motifs
 * :mod:`matevolve.ers`          -- evidence-based recommender (Dempster-Shafer)
 * :mod:`matevolve.database`     -- the structure database (CSV + CIF + profile per structure)
 * :mod:`matevolve.dft_io`       -- hand-off of candidates to the external DFT tool

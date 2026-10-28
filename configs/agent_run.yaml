@@ -1,0 +1,65 @@
+# MatEvolve configuration for the SKILL version of the framework (see skills/README.md).
+# Identical to configs/magnet_run.yaml except for the llm block.
+
+llm:                                   # SKILL TRANSPORT: the model replies are written by the Claude session that runs the
+                                       # skill (skills/matevolve-*), not fetched from an API. Everything else is identical to
+                                       # magnet_run.yaml: same prompts, budgets, tolerances, recommender and database.
+  provider: agent
+  model: claude-fable-5                # recorded in the logs only; the session decides which model answers
+  temperature: 0.5
+  # exchange: runs/<run>/llm           # default: the llm/ folder next to the run's logs (pending/ requests, replies/)
+
+translate:                             # METHOD -- structure -> profile and profile -> structure translation
+  geometry_tool: true                  # give CIF2Text the deterministic neighbour-list / Voronoi report of the structure
+  standardize: true                    # second CIF2Text pass that rewrites every motif in the controlled vocabulary
+  validity_budget: 5                   # Text2CIF: attempts to produce a parseable, fully occupied, well-separated CIF
+  min_distance: 1.5                    # A: a CIF with two atoms closer than this is invalid
+  prerelax: true                       # relax a valid Text2CIF structure with M3GNet before it is re-translated
+  prerelax_model: M3GNet-PES-MatPES-PBE-2025.2   # matgl potential, fetched from the Hugging Face org 'materialyze' on first use
+                                                 # (the reported runs used M3GNet-MP-2021.2.8-PES, no longer distributed;
+                                                 # 'check' lists the names on offer)
+  prerelax_fmax: 1.0                   # eV/A: force tolerance of that loose pre-relaxation
+  prerelax_steps: 100                  # maximum optimizer steps of the pre-relaxation
+  primitive: true                      # reduce the pre-relaxed structure to its primitive cell
+  translate_budget: 5                  # Structure Translate: CIF2Text -> Text2CIF -> check round trips before giving up
+  realize_budget: 5                    # Motif Translate: Text2CIF -> CIF2Text -> coverage check attempts before giving up
+  precision_threshold: 0.7             # coverage check passes iff recall = 1 and precision >= this
+  min_confidence: 0.6                  # a judge's containment vote below this confidence does not count as a cover
+  matcher_tolerances: {ltol: 0.4, stol: 0.7, angle_tol: 15}   # StructureMatcher tolerances of the round-trip test
+
+loop:                                  # METHOD -- the generation loop and the recommender
+  n_generations: 4                     # generations to run; 'update' stops the run after the last one
+  offspring_per_generation: 200        # accepted offspring produced per generation
+  dft_budget_per_generation: 100       # offspring selected by the ERS and handed to the DFT tool
+  parent_pool_size: 200                # parents: one from the N lowest E_hull, one from the N highest mu0Ms
+  operator: CROSSOVER                  # CROSSOVER | ELEMENT MUTATION | GEOMETRY MUTATION (the design agent's operation)
+  stability_epsilon: 0.1               # eV/atom: E_hull <= epsilon is 'stable' -- the ERS label and the SUN criterion
+  ers_alpha: 0.01                      # ERS: mass placed on one observation ('score --grid-search-alpha' re-selects it)
+  ers_max_combination_size: 2          # ERS: substitutions of at most this many motif groups count as evidence (null = no cap)
+  ers_rank_by: plausibility            # ERS: plausibility = rank by 1 - m_unstable ("least evidence against");
+                                       #      belief = rank by m_stable
+  export_unselected: true              # also write the unselected offspring to gen_XX/dft/ (diagnostics outside the loop)
+  group_prefix: G_                     # motif-group label written to data.csv: G_<cluster id>
+
+clustering:                            # motif groups: clustered / assigned by the matevolve-cluster skill (skills/matevolve-cluster)
+  clusters_json: database/motif_groups/clusters.json   # PROJECT -- the frozen group vocabulary the skill wrote ('apply');
+                                                       # absent = fresh study: the skill clusters the database motifs first.
+                                                       # The clustering parameters (R, batch size, convergence rule, ...) are
+                                                       # set when the skill's tool is initialized (cluster_tools.py init).
+
+database:                              # PROJECT -- the pool: data.csv + <id>.cif + <id>.txt per structure
+  csv: database/data.csv               # the table; its folder holds the CIFs and profiles
+  columns:                             # column names in data.csv (change them to use an existing property table as is)
+    id: new_material_id                # structure id = file stem of <id>.cif / <id>.txt
+    formula: formula                   # reduced formula (optional)
+    e_hull: energy_above_hull          # eV/atom, from the DFT tool -- required
+    mu0ms: mu0M_T_corrected            # tesla, from the DFT tool -- the magnetization parent pool
+    groups: set_names                  # motif groups of the structure, '|'-separated (written by init / update)
+    profile_file: profile_file         # path of the motif profile (written by init / update)
+    spacegroup: spacegroup_number      # optional, read by 'score': duplicate class = reduced formula + space group
+    novel: unseen                      # optional, read by 'score': True if no match in the reference database
+    new_prototype: new_prototype       # optional, read by 'score': True if the prototype is absent from the reference
+    # generation, parents, selected, m_stable, m_unstable, m_unknown keep their default names
+
+# DFT relaxations and property calculations are done by a separate tool; this code only exports the
+# candidates (gen_XX/dft/) and reads the properties back from data.csv.

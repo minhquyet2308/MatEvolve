@@ -22,6 +22,7 @@ Verification methods: **T** = covered by an offline unit test in `tests/`;
 | The 400 unselected proposals are relaxed as diagnostics, outside the search loop | `LoopConfig.export_unselected`; their rows carry `selected = 0` in `data.csv` and `Database.in_pool()` keeps them out of the parent pools and the ERS evidence | T |
 | All agents on one frozen model, Claude Fable 5 (`claude-fable-5`), temperature 0.5 | `matevolve/llm.py::DEFAULT_MODEL, DEFAULT_TEMPERATURE`, `configs/magnet_run.yaml::llm` | R |
 | *(note)* the `anthropic` SDK ≥ 1.0 no longer exposes `temperature` on `Messages.create`; the client passes it through `extra_body` and, if the model's API rejects it, runs at the model default with a warning | `AnthropicClient.complete` | R |
+| *(note)* the released code also runs as Claude skills (`skills/`): with `llm.provider: agent` the same agents' prompts are answered by the Claude session through a file exchange (`matevolve/llm.py::AgentClient`) instead of the API; all deterministic steps are the same code, so the two versions differ only in the model transport (the reported run used the API version) | `AgentClient`, `loop.py` chains (`NeedReply`), `scripts/run_matevolve.py::report_pending`, `configs/agent_run.yaml`, `skills/*/SKILL.md` | T (`test_agent_transport.py`) |
 | Seed set: RE ∈ {Ce, Pr, Nd, Sm, Gd, Tb, Dy, Ho, Er, Y} × TM ∈ {Fe, Co, Mn, Ni}, *M* > 10 μ<sub>B</sub>/f.u., *E*<sub>hull</sub> ≤ 0.2 eV/atom, ≤ 100 atoms; population initialized from D<sub>seed</sub> | `scripts/fetch_database.py --variant seeds` downloads D<sub>seed</sub> (948 structures with CIF, motif profile and properties) from the Zenodo record; `loop.py::init` marks them generation 0 and translates / groups any structure still lacking a profile (step 0) | R, T |
 
 ## 2. Motif profile and CIF2Text (Sec. 2.1, SI S1)
@@ -64,19 +65,25 @@ Verification methods: **T** = covered by an offline unit test in `tests/`;
 
 ## 5. Motif clustering (Methods 4, Algorithm 4)
 
-| Manuscript | Code | Check |
+The clustering and the assignment of motifs to the frozen groups are performed by the **matevolve-cluster
+skill** shipped in `skills/matevolve-cluster/` — the same skill that produced the 17 groups of the reported
+run — and not by the Python package. Worker sub-agents vote in a Claude session; the skill's stdlib tool
+`scripts/cluster_tools.py` counts votes and takes every decision; `apply` writes the groups into the database.
+
+| Manuscript | Code (skill) | Check |
 |---|---|---|
-| *R* = 5 workers vote group-or-none; consensus *s*<sub>i</sub> = max<sub>g</sub> *n*<sub>ig</sub>/*R* | `clustering/consensus.py::tally` (`R_WORKERS = 5`); the maximum runs over the groups *g*, so repeated *none* votes lower *s*<sub>i</sub>; a motif is an outlier when *none* out-votes every group | T |
-| Confusion *c*<sub>gh</sub> = \|g ⊓ h\| / min(\|g\|,\|h\|); merge when *c*<sub>gh</sub> ≥ 0.5 over ≥ 3 motifs | `confusion`, `decide` (`PHI_MERGE = 0.5`, `MIN_CONFUSE = 3`); g ⊓ h = motifs voted into both groups, \|g\| = motifs voted into g (so 0 ≤ *c*<sub>gh</sub> ≤ 1) | T |
-| Contested fraction ρ<sub>g</sub> (consensus < 0.6); split when ρ<sub>g</sub> > 0.3 unless contested votes concentrate on one rival → merge | `contested_fraction`, `rival_concentration`, `decide` (`S_STAR = 0.6`, `Q_SPLIT = 0.3`, strict `>`; `LEAK_CONCENTRATION = 0.6`) | T |
-| Birth from ≥ 15 motifs voted none | `decide` (`OUTLIER_FLOOR = 15`) → `MotifCluster.m_step` seed prompt in discovery mode | T, R |
-| Prototype resummarized from members (centroid update) | `MotifCluster.m_step` step 1, `prompts/cluster/update_prototype_*.txt` | R |
-| ARI (Hubert–Arabie) between successive rounds | `adjusted_rand_index` | T (equals scikit-learn) |
-| Stop when mean consensus ≥ 0.8 and ARI ≥ 0.95 for two rounds, or after 8 rounds | `converged` (`S_MIN`, `ARI_MIN`, `STABLE_ROUNDS = 2`, `MAX_ROUNDS = 8`); judged after the E-step, so the final assignment refers to the final prototypes | T |
-| ≈ a dozen initial prototypes proposed from the motif set | `ClusterConfig.seed_k0 = 12`, `MotifCluster.seed` | R |
-| Only votes and prototype text come from the model; all counting deterministic | `consensus.py` is pure Python; `agentic_kmeans.py` only parses categorical votes / prototype JSON | R |
-| Groups fixed after clustering; candidate motifs assigned to them before ERS scoring | `MotifCluster.from_clusters`, `assign_frozen`; `loop.py::MatEvolve._groups_of` | R |
-| Worker prompts (assign, seed/discovery, update, merge, split, resolution rule) | `prompts/cluster/*.txt`, `resolution_rule.md` (taken from the clustering skill that produced the 17 groups) | R |
+| *R* = 5 workers vote group-or-none; consensus *s*<sub>i</sub> = max<sub>g</sub> *n*<sub>ig</sub>/*R* | `cluster_tools.py tally` (`--R 5`) | R |
+| Confusion *c*<sub>gh</sub> = \|g ⊓ h\| / min(\|g\|,\|h\|); merge when *c*<sub>gh</sub> ≥ 0.5 over ≥ 3 motifs | `decide` (`phi_merge = 0.5`, `min_confuse = 3`); `references/consensus_rules.md` | R |
+| Contested fraction ρ<sub>g</sub> (consensus < 0.6); split when ρ<sub>g</sub> > 0.3 unless contested votes concentrate on one rival → merge | `decide` (`s_star = 0.6`, `q_split = 0.3`, `leak_conc = 0.6`, co-association cut `co_thresh = 0.5`) | R |
+| Birth from ≥ 15 motifs voted none | `outlier_floor = 15`; discovery variant of `references/seed_prompt.md` | R |
+| Prototype resummarized from members (centroid update) | `references/update_prototype_prompt.md`, stability check `references/prototype_stability_prompt.md` | R |
+| ARI (Hubert–Arabie) between successive rounds | `converge` (ρ<sub>t</sub> = 1 − ARI) | R |
+| Stop when mean consensus ≥ 0.8 and ARI ≥ 0.95 for two rounds, or after 8 rounds | `converge` (`s_min = 0.8`, `eps = 0.05` ⇔ ARI ≥ 0.95, two consecutive rounds, `max_rounds = 8`) | R |
+| ≈ a dozen initial prototypes proposed from the motif set | `seed_k0 = 12`, `references/seed_prompt.md` | R |
+| Only votes and prototype text come from the model; all counting deterministic | `cluster_tools.py` is pure stdlib Python; workers return categorical votes (canaries + `verify` guard against scripted answers) | R |
+| Groups fixed after clustering; candidate motifs assigned to them before ERS scoring | `init --dictionary <clusters.json>` (frozen prototypes, one E-step) → `apply --offspring` / `apply --database`; `loop.py::MatEvolve.rank` refuses unassigned offspring, `generate` refuses an unassigned pool | T (`test_loop`) |
+| Worker prompts (assign, seed/discovery, update, merge, split, resolution rule) | `skills/matevolve-cluster/references/*.md` | R |
+| Resolution rule: unit class + dimensionality + coordination archetype + CN band | `references/resolution_rule.md` | R |
 
 ## 6. ERS (Methods 5)
 
@@ -87,7 +94,8 @@ Verification methods: **T** = covered by an offline unit test in `tests/`;
 | M(C<sub>t</sub>,C<sub>v</sub>) = fused m({sub}); symmetric | `ERS.substitutability`, `_pair_key` | T |
 | Target belief: each host with a single substitution C<sub>t</sub> ← C<sub>v</sub> yielding S<sub>new</sub> transfers its label with strength M (Shafer discount, residual 1−M on Ω) | `ERS.target_mass` (hosts must share ≥ 1 group with the candidate, as the evidence pairs of stage 1 do) | T |
 | Dempster's rule, commutative/associative; rank by m({⊤}) | `ers/mass_function.py::MassFunction.combine`, `ERS.rank` | T |
-| α fixed by cross-validated grid search (α = 0.1) | `ERS.grid_search_alpha` (k-fold accuracy of label reproduction); `LoopConfig.ers_alpha = 0.1` | T |
+| *(as run — differs from the manuscript text)* the reported run ranked by **plausibility** Pl(⊤) = m({⊤}) + m(Ω) = 1 − m({¬⊤}) ("least evidence of instability") and counted only substitutions of **≤ 2 groups** as evidence (`n_gram_evidence = 2`); both are the release defaults (`LoopConfig.ers_rank_by = "plausibility"`, `ers_max_combination_size = 2`), `belief` and `None` give the manuscript form. **The manuscript should state the plausibility ranking and the two-group cap** | `ERS.rank(by=...)`, `ERS.max_combination_size` | T |
+| α fixed by cross-validated grid search (α = 0.1) | `ERS.grid_search_alpha` (k-fold accuracy of label reproduction). **The reported run used α = 0.01** (`LoopConfig.ers_alpha = 0.01`); with α = 0.1 the strengths of frequent substitutions saturate to 1 on this evidence set and the ranking collapses into tie blocks, while α = 0.01 keeps ~100 distinct scores per 200 offspring. **The manuscript's value should be checked** | T |
 | Evidence set = seed structures + DFT-validated candidates of previous generations | `Database.observations()` used in `MatEvolve.rank` and `score` | R |
 
 ## 7. Property evaluation and first-principles validation (Methods 6, SI S8)
