@@ -10,8 +10,10 @@ selected candidates between generations. Motif groups come from an agentic conse
 Claude **skill** (`skills/matevolve-cluster`). The whole framework is also available as skills ([5](#5-skill-version)):
 same Python, model replies from the Claude session instead of the API.
 
-Reference implementation of the paper *MatEvolve* (Le, Ha, Vu-Dinh, Nguyen, Tran, Tran, Miyake, Kino, Dam). The
-statement-by-statement mapping to the manuscript is in [`docs/CODE_MANUSCRIPT_CORRESPONDENCE.md`](docs/CODE_MANUSCRIPT_CORRESPONDENCE.md).
+Reference implementation of the paper *MatEvolve* (Le, Ha, Vu-Dinh, Nguyen, Tran, Tran, Miyake, Kino, Dam).
+Documentation: [`docs/FUNCTIONS.md`](docs/FUNCTIONS.md) (how each function of the framework is implemented),
+[`docs/SKILLS.md`](docs/SKILLS.md) (the skills and the transport that connects them to the code),
+[`docs/FOLDER_LAYOUT.md`](docs/FOLDER_LAYOUT.md) (every file a run writes).
 
 ```
 parents ──► Structure Translate ──► motif profiles ──► Motif editing ──► offspring profiles
@@ -435,7 +437,7 @@ run any command with `configs/agent_run.yaml`, answer the request files, re-run.
 | `examples/` | `components_demo.py` (translate → crossover → realize), `ers_demo.py` (recommender, no model calls) |
 | `configs/` | `magnet_run.yaml` (reported run), `agent_run.yaml` (skills), `smoke_run.yaml` (dummy model) |
 | `environment.yml`, `pyproject.toml` | conda environment / package definition |
-| `docs/` | `FOLDER_LAYOUT.md` (database and run folders), `CODE_MANUSCRIPT_CORRESPONDENCE.md` |
+| `docs/` | `FUNCTIONS.md` (the functions and their implementation), `SKILLS.md` (the skills and the transport), `FOLDER_LAYOUT.md` (database and run folders) |
 | `tests/` | offline tests (scripted and dummy models), including the smoke test |
 
 ## Citation
