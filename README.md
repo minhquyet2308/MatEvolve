@@ -94,7 +94,7 @@ the candidates as CIF files and reads the properties back from the database tabl
 
 **Command-line arguments.** Every sub-command of `scripts/run_matevolve.py` takes `--config configs/magnet_run.yaml`,
 the YAML file with all settings of a run ([section 4](#4-configuration-file)). The loop commands also take
-`--run runs/<name>`, the directory where the run writes its files (`gen_XX/`, `translate/`, `clustering/`, `logs/`,
+`--run runs/<name>`, the directory where the run writes its files (`gen_XX/`, `translate/`, `cluster_*/`, `logs/`,
 `metrics.json`); the database is not in it — it is where `database.csv` in the config points. Use the same `--run`
 for the successive commands of one run.
 
@@ -111,11 +111,168 @@ give each study its own `--run` directory. `--database path/to/data.csv` overrid
 
 #### 1.2.1 Pull the database of the reported study
 
-The database is archived on Zenodo — **<https://doi.org/10.5281/zenodo.XXXXXXX>** — and downloaded into
-`database/` in one of two variants:
+The database of the permanent-magnet study is archived on Zenodo — **<https://doi.org/10.5281/zenodo.XXXXXXX>** —
+as two zip archives with the same folder layout; `scripts/fetch_database.py` downloads one, checks its MD5 against
+the one Zenodo publishes and unpacks it into `database/` (the path in `configs/magnet_run.yaml`):
+
+| Variant | Content | Use |
+|---|---|---|
+| `--variant seeds` | the 948 seed structures (generation 0): `data.csv` with their DFT properties, `<id>.cif`, `<id>.txt` motif profile, and `motif_groups/clusters.json`, the 17 motif groups of the study | a clean start: run the four generations yourself from the same starting point |
+| `--variant full` | the seeds plus the 800 candidates of the four reported generations — 400 selected by the ERS (`selected = 1`) and 400 unselected (`selected = 0`) — with their relaxed structures, profiles, groups and DFT properties | resume or extend the reported run, reproduce the benchmark counts (`score`), or train the recommender on the whole record |
 
 ```bash
-python scripts/fetch_database.py --variant seeds
+python scripts/fetch_database.py --variant seeds                     # clean start -> database/
+python scripts/fetch_database.py --variant full                      # resume the reported run
+python scripts/fetch_database.py --variant full --archive ~/Downloads/matevolve_database_full.zip   # a zip downloaded by hand
+python scripts/run_matevolve.py check --config configs/magnet_run.yaml                           # database + vocabulary found?
+```
+
+`--record` accepts a record id, DOI or URL if you want another version of the record; `--force` replaces an
+existing `database/`. The folder is described column by column in [`docs/FOLDER_LAYOUT.md`](docs/FOLDER_LAYOUT.md).
+
+#### 1.2.2 Prepare a new database for a new study
+
+For another material family, build the folder from your own CIF files:
+
+```bash
+cp configs/magnet_run.yaml configs/my_study.yaml      # edit: database.csv -> projects/my_study/data.csv,
+                                                      #       clustering.clusters_json -> projects/my_study/motif_groups/clusters.json,
+                                                      #       database.columns if your property table uses other names
+python scripts/run_matevolve.py template --config configs/my_study.yaml --cifs my_cifs/ --out projects/my_study
+```
+
+`template` copies the CIFs into the folder and writes `data.csv` with one row per structure and the columns the loop
+expects (`new_material_id`, `formula`, `energy_above_hull`, `mu0M_T_corrected`, `spacegroup_number`, `generation`,
+`parents`, `selected`, `set_names`, `profile_file`, `unseen`, `new_prototype`), plus a `README.txt` that says which
+to fill. Before `init` you fill, with your own DFT or property tool, `energy_above_hull` (eV/atom; required — it
+defines stability for the recommender) and the target property column (`mu0M_T_corrected` in the magnet study; any
+column works, `database.columns.mu0ms` names it — the second parent pool is drawn from its highest values).
+Everything else is written by the loop: `init` translates every structure into a motif profile, and the
+`matevolve-cluster` skill builds the motif-group vocabulary from those profiles ([3.3](#33-fresh-scenario-new-database-and-motif-clustering)).
+
+---
+
+## 2. Example code of the core functions
+
+The agents and the two translation loops can be used directly from Python, without the database or the loop.
+`examples/components_demo.py` runs the complete chain on two seed structures of the database (one real model,
+15–30 calls, a few minutes):
+
+```
+CIF (parent A) ──Structure Translate──► motif profile A ─┐
+                                                         ├──EvoOperator (CROSSOVER)──► offspring design ──Motif Translate──► CIF
+CIF (parent B) ──Structure Translate──► motif profile B ─┘
+```
+
+```python
+from pymatgen.core import Structure
+from matevolve import AnthropicClient
+from matevolve.agents import CIF2Text, CoverageJudge, EvoOperator, Text2CIF
+from matevolve.translate import Translator
+
+llm = AnthropicClient(model="claude-fable-5", temperature=0.5)          # reads ANTHROPIC_API_KEY
+tr = Translator(CIF2Text(llm), Text2CIF(llm, prerelax=True), CoverageJudge(llm))
+
+# 1. Structure Translate: CIF -> motif profile, accepted only if Text2CIF rebuilds a matching structure
+a = tr.structure_translate(Structure.from_file("database/mp-1219022.cif"))   # SmTiFe11
+b = tr.structure_translate(Structure.from_file("database/mp-1217843.cif"))   # Tb(Fe5Si)2
+print(a.accepted, len(a.attempts), a.profile.text_description())           # composition + standardized motifs
+#    a.rebuilt is the structure S' rebuilt from the profile; a.attempts holds every round trip and its feedback
+
+# 2. Motif editing: the design agent crosses the two profiles into one offspring design
+design = EvoOperator(llm).propose([a.profile, b.profile], operator="CROSSOVER")[0]
+print(design.composition, design.text_description)                         # motifs inherited from A and B
+
+# 3. Motif Translate: design -> CIF, accepted only if the re-profile covers every motif of the design
+off = tr.motif_translate(design)
+print(off.accepted, off.structure.composition.reduced_formula, len(off.structure))
+#    off.structure: pre-relaxed (M3GNet), primitive cell; off.cif_raw: as Text2CIF wrote it;
+#    off.profile: the re-profile T'_off; off.attempts: validity issues and coverage report per attempt
+```
+
+```bash
+export ANTHROPIC_API_KEY=...
+python examples/components_demo.py                        # the chain above on the two default seeds -> runs/demo/
+python examples/components_demo.py --cif-a A.cif --cif-b B.cif --out runs/demo --no-prerelax   # your CIFs, no matgl
+python examples/ers_demo.py                               # the recommender on the database: no model calls (section 3.1)
+```
+
+What the objects contain:
+
+| Object | Content |
+|---|---|
+| `MotifProfile` (`matevolve.profile`) | `composition`, `motifs` — `Motif`s with `name`, `description_raw`, `description_standardized` (controlled vocabulary), `source`; `text_description()`, `save()` / `load()` (JSON), `profile_to_txt()` for the `<id>.txt` of the database |
+| `TranslateResult` (`structure_translate`) | `accepted`, `profile`, `rebuilt` (S′), `attempts` — each with profile, rebuilt CIF, re-profile, coverage report, `StructureMatcher` verdict, feedback; `save(dir)` writes `profile.json`, `rebuilt.cif`, `attempts.json`, `summary.json` |
+| `DesignConcept` (`EvoOperator.propose`) | `composition`, `motifs`, `text_description`, `parents`, `operator`; `to_profile()` |
+| `RealizeResult` (`motif_translate`) | `accepted`, `structure`, `cif_raw`, `profile` (re-profile), `attempts` — validity issues and coverage per attempt; `save(dir)` writes `final.cif`, `final_raw_llm.cif`, `reprofile.json`, `attempts.json`, `summary.json` |
+| `CoverageReport` (`CoverageJudge.compare(target, observed)`) | per motif of each profile: covered by the other?, confidence, matched motif; `recall` (target motifs recovered), `precision` (observed motifs that belong); acceptance = recall 1 and precision ≥ `translate.precision_threshold` (0.7); `feedback()` turns the misses into the `##ISSUE##` lines of the next attempt |
+
+The same two functions are available from the command line for files, with the settings of a config and a
+`StructureMatcher` verdict / RMSD printed for the round trip:
+
+```bash
+python scripts/run_matevolve.py structure-translate --config configs/magnet_run.yaml --cif SmFe12.cif   --out runs/translate
+python scripts/run_matevolve.py structure-translate --config configs/magnet_run.yaml --cif my_cifs/     --out runs/translate   # a folder
+python scripts/run_matevolve.py motif-translate     --config configs/magnet_run.yaml --profile SmFe12.txt --out runs/translate
+```
+
+Every model message of a demo or a command is logged in `<out>/conversations.jsonl` (system prompt, user turns,
+replies), so each decision of an agent can be read afterwards.
+
+---
+
+## 3. The MatEvolve framework
+
+`scripts/run_matevolve.py` runs the generation loop on the database. Because the first-principles step is an
+external tool, one generation is **two commands with the DFT step between them**, and the motif grouping of new
+structures is a hand-over to the `matevolve-cluster` skill:
+
+```
+                 ┌──────────────────────────────── generate ────────────────────────────────┐
+database ──► parents ──► design agent ──► Motif Translate ──► 200 offspring ──[skill: assign motifs]──► ERS ranking ──► export 100
+   ▲                                                                                                                      │
+   │                                                                                                            external DFT tool
+   │                                                                                                   (relax, E_hull, mu0Ms; not here)
+   └──[skill: assign motifs]◄── Structure Translate ◄── relaxed CIFs + property rows appended to data.csv ◄───────────────┘
+                 └────────── update ──────────┘
+```
+
+### 3.1 Key functions
+
+| Command | Step | What it does | Reads | Writes |
+|---|---|---|---|---|
+| `check [--llm]` | — | verifies the installation: versions, API key, `matgl` + M3GNet weights (test relaxation), database and vocabulary files; `--llm` sends one message to the model | config | — |
+| `init` | 0 | stamps the structures without a generation as generation 0 (the seeds) and Structure-Translates every structure without a profile; then prints the `matevolve-cluster` commands if any structure still lacks motif groups (fresh database: full clustering; otherwise assignment to the frozen groups) | `data.csv`, CIFs | `<id>.txt`, `profile_file`, `generation`; `<run>/translate/<id>/` trails |
+| `generate` | 1 | **first call** — draws parents (one of the `parent_pool_size` lowest *E*<sub>hull</sub>, one of the highest μ<sub>0</sub>*M*<sub>s</sub>, seeded random), the design agent crosses their profiles into one design, Motif Translate realizes it; repeated until `offspring_per_generation` are accepted; then prints the skill commands that assign the offspring motifs to the groups | database, `clusters.json` | `gen_XX/design_steps/step_NNNN/`, `gen_XX/offspring.json` |
+| | 2 | **second call** (after the skill) — fits the ERS on the pool (label: *E*<sub>hull</sub> ≤ `stability_epsilon`), ranks the offspring by plausibility of stability, selects `dft_budget_per_generation`, exports one folder per candidate for the DFT tool | `offspring.json` with `motif_groups` | `gen_XX/ers_ranking.csv`, `gen_XX/dft/<oid>/structure.cif`, `manifest.csv`, `gen_XX/offspring.csv` (provenance rows for `data.csv`) |
+| *(you)* | — | run the DFT tool on `gen_XX/dft/*/structure.cif`; copy each relaxed `<oid>.cif` into the database folder and append the rows of `gen_XX/offspring.csv` with `energy_above_hull` and the property column to `data.csv` | | |
+| `update` | 3–4 | Structure-Translates the relaxed structures of the newest generation, prints the skill commands that assign their motifs, and reports whether the next generation can start (or that `n_generations` is reached) | relaxed CIFs, `data.csv` | `<oid>.txt`, `profile_file`, `set_names` (via the skill) |
+| `score [--grid-search-alpha]` | report | outside the loop, no model calls: refits the recommender on the whole database, writes the leave-one-out masses (`m_stable`, `m_unstable`, `m_unknown`) and `<run>/metrics.json` — stable, unique (same reduced formula and space group = duplicate), novel (`unseen`), SUN, magnetic (> 1 T), new prototype and joint counts for the seeds, each generation (selected vs unselected) and all candidates; `--grid-search-alpha` re-selects the ERS α by 10-fold cross-validation | `data.csv` | `metrics.json`, the three mass columns |
+| `template` | — | the empty database folder of a new study (1.2.2) | CIFs | `data.csv`, `README.txt` |
+| `structure-translate`, `motif-translate` | — | the two translators on files (section 2) | a CIF / a profile | `<out>/<id>/` |
+
+**The generation number is read from the database**, so no command needs it: `generate` produces (highest
+generation with properties) + 1 and refuses to start if that generation is already exported but its properties are
+not back in `data.csv`; `update` processes the highest generation present. `--gen N` overrides either.
+
+**How the ranking works.** Each pool structure is an observation (its set of motif groups, stable or not). For every
+offspring the ERS looks for pool structures whose group sets differ from the offspring's by the exchange of at most
+`ers_max_combination_size` groups, converts the evidence that such an exchange preserves stability — pairs of pool
+structures with and without it, each worth a mass `ers_alpha` — into Dempster–Shafer mass functions, and combines
+them into *m*<sub>stable</sub>, *m*<sub>unstable</sub>, *m*<sub>unknown</sub>. The default criterion
+(`ers_rank_by: plausibility`) orders the offspring by 1 − *m*<sub>unstable</sub>, "least evidence against", and
+breaks ties by *m*<sub>stable</sub>. `examples/ers_demo.py` shows the fitted exchanges, the hindsight ranking of
+the generation-1 proposals and the leave-one-out accuracy on the released database.
+
+**Every step is resumable.** Translation trails, design steps and replies are on disk; a command rerun after an
+interruption skips what is finished. The skill hand-overs are printed with the exact paths, so the console is the
+to-do list.
+
+### 3.2 Basic scenario (from an initialized database)
+
+Starting from the seeds of the reported study (1.2.1, `--variant seeds`; the vocabulary `clusters.json` is in it):
+
+```bash
 python scripts/run_matevolve.py check    --config configs/magnet_run.yaml --llm
 python scripts/run_matevolve.py init     --config configs/magnet_run.yaml --run runs/magnet   # nothing to translate: stamps generation 0
 python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet   # proposes 200 offspring -> runs/magnet/gen_01/offspring.json
@@ -133,7 +290,8 @@ python scripts/run_matevolve.py score    --config configs/magnet_run.yaml --run 
 ```
 
 Every `[skill]` line is printed by the preceding command with the exact paths, so the sequence can be followed from
-the console.
+the console. With `--variant full` the same commands continue the reported run: `init` finds nothing to translate,
+`score` reproduces the benchmark counts of the four generations, and `generate` starts generation 5.
 
 ### 3.3 Fresh scenario (new database and motif clustering)
 
@@ -169,7 +327,7 @@ a study with another objective only renames that column.
 
 | block → field | meaning | reported run |
 |---|---|---|
-| `llm.model`, `llm.provider` | the language model behind all agents; `anthropic`, or `openai` for any OpenAI-compatible endpoint (`base_url`) | `claude-fable-5` |
+| `llm.model`, `llm.provider` | the language model behind all agents; `anthropic`, `openai` for any OpenAI-compatible endpoint (`base_url`), or `agent` for the skill version (section 5) | `claude-fable-5` |
 | `llm.api_key_env` | environment variable that holds the API key — keys never go in the file | `ANTHROPIC_API_KEY` |
 | `translate.translate_budget` / `realize_budget` | round-trip attempts of Structure Translate / Motif Translate before a structure or design is given up | 5 / 5 |
 | `translate.validity_budget`, `min_distance` | Text2CIF attempts to produce a valid CIF; minimum interatomic distance (Å) | 5, 1.5 |
