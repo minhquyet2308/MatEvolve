@@ -32,7 +32,7 @@ database ◄── translate ◄── external DFT tool ◄── export ◄─
 1. [Installation](#1-installation) — 1.1 [Python environment](#11-python-environment) · 1.2 [Database](#12-database)
    (1.2.1 [the database of the reported study](#121-pull-the-database-of-the-reported-study) · 1.2.2 [a new database for a new study](#122-prepare-a-new-database-for-a-new-study))
 2. [Example code of the core functions](#2-example-code-of-the-core-functions) — translators + design agent
-3. [The MatEvolve framework](#3-the-matevolve-framework) — 3.1 [key functions](#31-key-functions) · 3.2 [basic scenario](#32-basic-scenario-from-an-initialized-database) · 3.3 [fresh scenario](#33-fresh-scenario-new-database-and-motif-clustering)
+3. [The MatEvolve framework](#3-the-matevolve-framework) — 3.1 [key functions of `run_matevolve.py`](#31-key-functions-of-scriptsrun_matevolvepy) · 3.2 [basic scenario](#32-basic-scenario-from-an-initialized-database) · 3.3 [fresh scenario](#33-fresh-scenario-new-database-and-motif-clustering)
 4. [Configuration file](#4-configuration-file)
 5. [Skill version](#5-skill-version-the-framework-inside-a-claude-session) — the same code, model replies by the session instead of the API
 6. [Repository layout](#6-repository-layout)
@@ -237,7 +237,7 @@ database ──► parents ──► design agent ──► Motif Translate ─�
                 └────────── update ──────────┘
 ```
 
-### 3.1 Key functions
+### 3.1 Key functions of `scripts/run_matevolve.py`
 
 | Command | Step | What it does | Reads | Writes |
 |---|---|---|---|---|
@@ -274,26 +274,22 @@ to-do list.
 Starting from the seeds of the reported study (1.2.1, `--variant seeds`; the vocabulary `clusters.json` is in it):
 
 ```bash
-python scripts/run_matevolve.py check    --config configs/magnet_run.yaml --llm
-python scripts/run_matevolve.py init     --config configs/magnet_run.yaml --run runs/magnet   # nothing to translate: stamps generation 0
-python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet   # proposes 200 offspring -> runs/magnet/gen_01/offspring.json
-#   [skill] assign the offspring motifs:  cluster_tools.py init --motifs runs/magnet/gen_01/offspring.json
-#           --state runs/magnet/gen_01/cluster_offspring --dictionary database/motif_groups/clusters.json
-#           -> passes / votes / tally / finalize -> apply --offspring runs/magnet/gen_01/offspring.json
-python scripts/run_matevolve.py rank     --config configs/magnet_run.yaml --run runs/magnet   # ERS ranking, exports 100 -> gen_01/dft/<oid>/structure.cif
-#   ... DFT tool on gen_01/dft/*/structure.cif; copy the relaxed <oid>.cif into database/ and append the rows
-#       (ids, generation, parents, selected from gen_01/offspring.csv + energy_above_hull, mu0M_T_corrected) to database/data.csv ...
-python scripts/run_matevolve.py update   --config configs/magnet_run.yaml --run runs/magnet   # translates the relaxed structures
-#   [skill] assign the new motifs:  cluster_tools.py init --motifs database --only-unassigned
-#           --state runs/magnet/cluster_db_g01 --dictionary database/motif_groups/clusters.json -> ... -> apply --database database
-python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet   # generation 2 ...
-python scripts/run_matevolve.py score    --config configs/magnet_run.yaml --run runs/magnet   # report at any time
+python scripts/run_matevolve.py check    --config configs/magnet_run.yaml --llm                 # setup
+python scripts/run_matevolve.py init     --config configs/magnet_run.yaml --run runs/magnet     # step 0: seeds = generation 0
+python scripts/run_matevolve.py generate --config configs/magnet_run.yaml --run runs/magnet     # step 1: 200 offspring -> gen_01/offspring.json
+#   [skill] matevolve-cluster: assign the offspring motifs (commands printed by 'generate')
+python scripts/run_matevolve.py rank     --config configs/magnet_run.yaml --run runs/magnet     # step 2: ERS ranking, 100 exported -> gen_01/dft/
+#   [DFT]   relax gen_01/dft/*/structure.cif; copy <oid>.cif into database/, append the rows of gen_01/offspring.csv
+#           with energy_above_hull and mu0M_T_corrected to database/data.csv
+python scripts/run_matevolve.py update   --config configs/magnet_run.yaml --run runs/magnet     # step 3: translate the relaxed structures
+#   [skill] matevolve-cluster: assign the new motifs (commands printed by 'update')
+#   next generation: run 'generate' again (steps 1-3 repeat; 'generate' stops after loop.n_generations)
+python scripts/run_matevolve.py score    --config configs/magnet_run.yaml --run runs/magnet     # report, any time
 ```
 
-One generation is therefore `generate` → [skill] → `rank` → [DFT] → `update` → [skill]. Every `[skill]` line is
-printed by the preceding command with the exact paths, so the sequence can be followed from the console. With
-`--variant full` the same commands continue the reported run: `init` finds nothing to translate, `score` reproduces
-the benchmark counts of the four generations, and `generate` starts generation 5.
+Every `[skill]` line is printed by the preceding command with the exact paths. With `--variant full` the same
+commands continue the reported run: `init` finds nothing to translate, `score` reproduces the benchmark counts of
+the four generations, and `generate` starts generation 5.
 
 ### 3.3 Fresh scenario (new database and motif clustering)
 
@@ -302,17 +298,14 @@ For a new material family: a copy of the config pointing at the new database, th
 before the first generation.
 
 ```bash
-cp configs/magnet_run.yaml configs/my_study.yaml        # edit database.csv (-> projects/my_study/data.csv),
-                                                        # database.columns and clustering.clusters_json
+cp configs/magnet_run.yaml configs/my_study.yaml                                               # edit database.csv, database.columns,
+                                                                                               # clustering.clusters_json
 python scripts/run_matevolve.py template --config configs/my_study.yaml --cifs my_cifs/ --out projects/my_study
-#   ... fill energy_above_hull (and the property column) for every row of projects/my_study/data.csv ...
+#   [you]   fill energy_above_hull and the property column in projects/my_study/data.csv
 python scripts/run_matevolve.py check    --config configs/my_study.yaml --llm
-python scripts/run_matevolve.py init     --config configs/my_study.yaml --run runs/my_study
-#   translates every CIF (≈ 7 model calls per structure and attempt), then prints the skill commands:
-#   [skill] cluster_tools.py init --motifs projects/my_study --state runs/my_study/cluster_init --mode pilot
-#           -> seed prototypes, voting rounds until convergence (SKILL.md) -> finalize -> apply --database projects/my_study
-python scripts/run_matevolve.py generate --config configs/my_study.yaml --run runs/my_study
-#   ... [skill] offspring assignment / rank / DFT / update / [skill] assignment as in 3.2 ...
+python scripts/run_matevolve.py init     --config configs/my_study.yaml --run runs/my_study    # step 0: translate every structure
+#   [skill] matevolve-cluster: cluster all motifs -> motif_groups/clusters.json (commands printed by 'init')
+python scripts/run_matevolve.py generate --config configs/my_study.yaml --run runs/my_study    # step 1 ... then as in 3.2
 ```
 
 The clustering is the expensive step (the reported run clustered ≈ 11 000 motifs of 948 seeds); the skill
